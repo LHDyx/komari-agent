@@ -67,17 +67,18 @@ jobs:
             BASE="0.0.0"
           fi
 
-          # 序号 i 从现有 tag 推断，两支各自独立递增，且只统计当前基础版本：
+          # 序号 i 从现有 tag 推断，两支各自独立递增，且只统计当前基础版本。
+          # 只接受 1-8 位数字，旧的 <base>-custom.<10位时间戳> 格式不参与计数（它们会被发布步骤删除）：
           #   预览 <BASE>-custom-pre.<i>   正式 <BASE>-custom.<i>
           # 官方换代（BASE 变化）后自动从头开始，例如 1.5.12-custom-pre.1。
           case "${INPUT_KIND}" in
             release)
               PREFIX="${BASE}-custom"
-              LAST="$(git tag -l "${BASE}-custom.[0-9]*" | sed -nE "s/^${BASE}-custom\\.([0-9]+)$/\\1/p" | sort -n | tail -n 1 || true)"
+              LAST="$(git tag -l "${BASE}-custom.[0-9]*" | sed -nE "s/^${BASE}-custom\\.([0-9]{1,8})$/\\1/p" | sort -n | tail -n 1 || true)"
               ;;
             *)
               PREFIX="${BASE}-custom-pre"
-              LAST="$(git tag -l "${BASE}-custom-pre.[0-9]*" | sed -nE "s/^${BASE}-custom-pre\\.([0-9]+)$/\\1/p" | sort -n | tail -n 1 || true)"
+              LAST="$(git tag -l "${BASE}-custom-pre.[0-9]*" | sed -nE "s/^${BASE}-custom-pre\\.([0-9]{1,8})$/\\1/p" | sort -n | tail -n 1 || true)"
               ;;
           esac
           NEXT=$(( ${LAST:-0} + 1 ))
@@ -194,7 +195,7 @@ jobs:
           mapfile -t STALE < <(gh release list --repo "${REPO}" --limit 200 \
             --json tagName --jq '.[].tagName' \
             | { grep -E -- '-custom' || true; } \
-            | { grep -EvE -- '^[0-9]+\.[0-9]+\.[0-9]+-custom(-pre)?\.[0-9]+$' || true; })
+            | { grep -EvE -- '^[0-9]+\.[0-9]+\.[0-9]+-custom(-pre)?\.[0-9]{1,8}$' || true; })
           for tag in "${STALE[@]:-}"; do
             [ -n "${tag}" ] || continue
             echo "Deleting stale release ${tag}..."
