@@ -28,14 +28,14 @@
 - 推送到 `main` 或在 Actions 页面手动 `Run workflow` 触发；
 - 平台组合与官方 `build_all.sh` 完全一致（windows/linux/darwin/freebsd × amd64/arm64/386/arm，
   排除 windows/arm、darwin/386、darwin/arm，外加 linux/loong64，共 15 个）；
-- 产物同时作为 Artifact 上传，并发布为**预发布 Release**，tag 形如 `1.5.13-custom.2611161036`；
-- 只保留最近 10 个自构建 Release，更早的自动删除。
+- 产物同时作为 Artifact 上传，并发布为**预发布 Release**，tag 形如 `1.5.11-custom.2611161100`；
+- 只保留最近 10 个自构建 Release，更早的自动删除（按时间戳倒序）。
 
 下载某一个具体构建（tag 换成你要的那次）：
 
 ```bash
 curl -fL -o /tmp/komari-agent \
-  https://github.com/LHDyx/komari-agent/releases/download/1.5.13-custom.2611161036/komari-agent-linux-amd64
+  https://github.com/LHDyx/komari-agent/releases/download/1.5.11-custom.2611161100/komari-agent-linux-amd64
 sha256sum -c <(curl -fsSL .../komari-agent-linux-amd64.sha256 | sed "s#komari-agent-#/tmp/komari-agent#")
 install -m755 /tmp/komari-agent /opt/komari/agent
 ```
@@ -44,38 +44,37 @@ install -m755 /tmp/komari-agent /opt/komari/agent
 
 ## 版本号规则
 
+基础版本始终与官方最近正式 tag 同步（当前 `1.5.11`），不领先：
+
 | 用途 | 格式 | 示例 |
 | --- | --- | --- |
-| 二进制内嵌版本 | `<最近正式 tag +1 patch>+custom.<yymmddhhMM>.<sha>` | `1.5.12+custom.2611161036.d4f4eda` |
-| Release tag | `<最近正式 tag +2 patch>-custom.<yymmddhhMM>` | `1.5.13-custom.2611161036` |
+| 二进制内嵌版本 | `<正式 tag>-0.custom.<yymmddhhMM>` | `1.5.11-0.custom.2611161100` |
+| Release tag | `<正式 tag>-custom.<yymmddhhMM>` | `1.5.11-custom.2611161100` |
 
-- 内嵌版本的 `+custom…` 是 build 元数据，不参与 semver 比较：它**等于** `1.5.12`，比官方 `1.5.11` 新；
-- Release tag 必须是**预发布**，且**比内嵌版本高一个 patch**。原因是 `blang/semver` 的一处怪癖：
-  `1.5.12-custom.123`（alpha + 数字）会被判为**小于** `1.5.12`，用它当 tag 会永远选不中；
-  抬到 `1.5.13-custom.*` 后严格更大，并按时间戳递增，可作为自构建之间的更新源；
-- 需要固定内嵌版本号时可手动触发并填写 `version` 输入（Release tag 仍按上面的规则生成）。
+- 内嵌版本多一级预发布 `-0`，让它**严格低于**同号正式版和任何 `1.5.11-custom.*`，
+  这样后续自构建才被更新器识别为“更新”；
+- Release tag 用时间戳递增，是当前自构建的“新版本号”；
+- `+`/`-` 的判定完全以 `blang/semver` 实测为准（`x.y.z-alpha.123` 小于 `x.y.z`）。
+  需要固定内嵌版本号时可手动触发并填写 `version`。
 
 ## 自动更新
 
-默认更新源仍是上游 `komari-monitor/komari-agent`。改成自己的仓库：
+默认更新源就是这个 fork（`LHDyx/komari-agent`），不需要额外参数；`--update-repo` / `AGENT_UPDATE_REPO`
+可改回官方（`komari-monitor/komari-agent`）或指向别处。
 
 ```bash
-komari-agent --endpoint ... --token ... --update-repo LHDyx/komari-agent   # 且不要加 --disable-auto-update
-# 或 AGENT_UPDATE_REPO=LHDyx/komari-agent
-# 实测日志：No stable release asset was found for komari-agent-linux-amd64 in 1.5.*.
+komari-agent --endpoint https://你的面板 --token xxx          # 默认：只跟随本仓库的自构建
+komari-agent --endpoint ... --update-repo komari-monitor/komari-agent   # 切回官方源
 ```
 
-- **重要：自动更新会跳过你的自构建。** `selectLatestStableRelease` 会跳过 GitHub 上标记为
-  prerelease 的 Release，以及任何带 `-` 预发布标识的 tag。因此预发布的自构建不会被自动拉取；
-  发布成正式 Release 也不行（tag 带 `-custom.` 仍被跳过）。
-- 实际可选择的两条路：
-  1. **手动更新**（推荐）：加 `--disable-auto-update`，每次构建后用 `curl` + `.sha256` 覆盖二进制；
-  2. **给每次构建打正式 semver tag**（如 `1.5.13`、`1.5.14`…，不带任何 `-` 预发布段）并发布为正式
-     Release，此时 `--update-repo LHDyx/komari-agent` 会被自动升级到最新 tag。代价：这些 tag 会占用
-     官方版本号，将来官方发同名版本时会撞车。
-- 默认更新源仍是上游仓；`--update-repo` / `AGENT_UPDATE_REPO` 只是切换查询的仓库。
-- 指向自己的仓库后**不再收到官方更新**，官方发布新版本需要你用 `./sync-upstream.sh` 手动跟；
-- 更新是原地替换二进制，失败只能手动覆盖回滚；更新成功时进程以退出码 42 退出，靠 systemd 拉起。
+规则：
+
+- 更新源不是官方仓库时自动打开“允许预发布”，但**只接受 tag 含 `-custom.` 的自构建**，
+  不会被官方同名正式版（如 `1.5.11`）顶掉；指回官方仓库时恢复原始稳定通道规则；
+- 只跟进当前 major.minor 线内更高的版本，每次成功构建的 `1.5.11-custom.<较新时间戳>` 都是候选；
+- 指向自己的仓库后**不再收到官方更新**，官方发新版需要 `./sync-upstream.sh` 手动跟并重新构建；
+- 更新是原地替换二进制，失败只能手动覆盖回滚；更新成功后进程以退出码 42 退出，靠 systemd 拉起；
+- 容器内（存在 `/.komari-agent-container`）一律跳过自升级。
 
 ## 本地编译
 
@@ -90,7 +89,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
 
 ## 红线
 
-- 默认更新源是官方仓；不加 `--disable-auto-update` 就会在 6 小时内被官方版覆盖。
-  指向自己的仓库（`--update-repo LHDyx/komari-agent`）后同理：不要同时加 `--disable-auto-update`。
+- 默认更新源是本 fork；加 `--disable-auto-update` 会完全关闭自动更新。
+- 切回官方源（`--update-repo komari-monitor/komari-agent`）时，自构建版本会被官方更高版本覆盖。
 - 自编译产物不要对外分发/对外提供更新源（AGPL-3.0 + 不冒充官方）。
 - 本机 git 全局配置了 `http.proxy=127.0.0.1:10808`，代理没开时访问 GitHub 会直接失败。

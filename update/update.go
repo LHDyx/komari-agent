@@ -31,7 +31,15 @@ var (
 	// UpstreamRepo 是上游仓库；Repo 是更新器实际查询的仓库，可在运行时通过 --update-repo 覆盖。
 	UpstreamRepo string = "komari-monitor/komari-agent"
 	Repo         string = UpstreamRepo
+	// AllowPrerelease 允许从自建仓库选中带预发布标识的自构建 tag（如 1.5.11-custom.2601011200）。
+	// 仅在更新源不是上游仓库时开启，官方稳定通道的规则保持不变。
+	AllowPrerelease bool
 )
+
+// IsUpstreamRepo 报告当前更新源是否为官方仓库。
+func IsUpstreamRepo() bool {
+	return Repo == UpstreamRepo
+}
 
 // SetRepo 切换自动更新所查询的仓库（owner/name）。调用方负责校验格式。
 func SetRepo(slug string) error {
@@ -44,6 +52,9 @@ func SetRepo(slug string) error {
 
 const (
 	snapshotVersionPrefix = "Snapshot-"
+	// customTagMarker 标记自构建版本/标签（如 1.5.11-custom.2611161058）。
+	// 自建仓库允许预发布时，只接受带该标记的候选，避免被官方同名正式版顶掉。
+	customTagMarker = "-custom."
 	containerMarkerPath   = "/.komari-agent-container"
 	githubAPIBaseURL      = "https://api.github.com"
 	maxReleaseAssetSize   = int64(128 << 20)
@@ -89,6 +100,11 @@ type updateTarget struct {
 	version semver.Version
 	tag     string
 	input   string
+	// allowPrerelease 允许选中自构建的预发布 tag（形如 1.5.11-custom.2601011200）。
+	// 官方仓库必须保持 false（稳定通道不能吃快照和 beta）；
+	// 指向自建仓库时由 --update-repo 自动打开。打开后仍只接受带 -custom. 标记的候选，
+	// 不会因为"正式版大于预发布"而误升到官方正式版。
+	allowPrerelease bool
 }
 
 type releaseLister func(owner, repo string) ([]githubRelease, error)
@@ -257,7 +273,10 @@ func selectLatestStableRelease(releases []githubRelease, assetName string, targe
 		}
 		if release.Prerelease || len(version.Pre) > 0 {
 			if target.kind != targetExact || len(target.version.Pre) == 0 {
-				continue
+				// 自建仓库（--update-repo）允许自构建 tag，例如 1.5.11-custom.2601011200。
+				if !target.allowPrerelease {
+					continue
+				}
 			}
 		}
 
@@ -568,6 +587,11 @@ func stableNeedsUpdate(current *semver.Version, latest semver.Version, target up
 	if !target.matches(latest) {
 		return false
 	}
+	if target.allowPrerelease && target.kind != targetExact && !strings.Contains(latest.String(), customTagMarker) {
+		// 自建仓库模式只跟进本仓库的自构建（tag 带 -custom.）；
+		// 不带该标记的正式版（如官方 1.5.11）一律忽略，避免被顶成官方版。
+		return false
+	}
 	if target.kind == targetExact {
 		return current == nil || target.version.String() != current.String()
 	}
@@ -682,9 +706,10 @@ func runUpdateCheck(deps updateDeps) error {
 	}
 
 	return checkAndUpdateStable(&current, updateTarget{
-		kind:    targetCurrentLine,
-		version: current,
-		input:   current.String(),
+		kind:            targetCurrentLine,
+		version:         current,
+		input:           current.String(),
+		allowPrerelease: AllowPrerelease,
 	}, deps)
 }
 
