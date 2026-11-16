@@ -26,6 +26,9 @@ import (
 
 var flags = pkg_flags.GlobalConfig
 
+// defaultUpdateRepo 是默认的自动更新源：本仓库的 fork（自编译版本只跟随自己发布的构建）。
+const defaultUpdateRepo = "LHDyx/komari-agent"
+
 var warningPanelHost, warningRunAsUser string
 
 var RootCmd = &cobra.Command{
@@ -52,12 +55,16 @@ var RootCmd = &cobra.Command{
 		if flags.PreferIPVersion != "" && flags.PreferIPVersion != "4" && flags.PreferIPVersion != "6" {
 			return fmt.Errorf("invalid --prefer-ip-version value %q: expected 4 or 6", flags.PreferIPVersion)
 		}
-		if flags.UpdateRepo != "" {
-			if err := update.SetRepo(flags.UpdateRepo); err != nil {
-				return fmt.Errorf("invalid --update-repo value: %w", err)
-			}
-			log.Println("Automatic updates will use repository:", update.Repo)
+		// 更新源默认为本 fork；换源后允许选中自构建的预发布 tag（如 1.5.11-custom.<时间戳>）。
+		repo := flags.UpdateRepo
+		if repo == "" {
+			repo = defaultUpdateRepo
 		}
+		if err := update.SetRepo(repo); err != nil {
+			return fmt.Errorf("invalid --update-repo value: %w", err)
+		}
+		update.AllowPrerelease = !update.IsUpstreamRepo()
+		log.Println("Automatic updates will use repository:", update.Repo)
 		// 捕获中止信号，优雅退出
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -198,7 +205,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&flags.ConfigFile, "config", "", "Path to the configuration file")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableCompression, "disable-compression", false, "Disable v2 gzip/permessage-deflate compression")
 	RootCmd.PersistentFlags().StringVar(&flags.PreferIPVersion, "prefer-ip-version", "", "Prefer IP version for dashboard connections: 4 or 6")
-	RootCmd.PersistentFlags().StringVar(&flags.UpdateRepo, "update-repo", "", "GitHub repository (owner/name) used for automatic updates, e.g. your own fork. Defaults to the upstream repository")
+	RootCmd.PersistentFlags().StringVar(&flags.UpdateRepo, "update-repo", defaultUpdateRepo, "GitHub repository (owner/name) used for automatic updates. Defaults to "+defaultUpdateRepo)
 	RootCmd.PersistentFlags().ParseErrorsWhitelist.UnknownFlags = true
 }
 

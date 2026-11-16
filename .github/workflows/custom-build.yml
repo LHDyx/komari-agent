@@ -4,17 +4,18 @@ name: Custom Cross Build
 # 产物上传为 Artifact，并发布为预发布 Release。
 #
 # 版本号约定（见 CUSTOM-BUILD.md）：
-#   内嵌版本    = <最近正式 tag +1 patch>+custom.<yymmddhhMM>.<sha>      例如 1.5.12+custom.2611160949.d4f4eda
-#   Release tag = <最近正式 tag +2 patch>-custom.<yymmddhhMM>            例如 1.5.13-custom.2611160949
-# 两者都是合法 semver；Release tag 在该 minor 线内按时间递增，可作为自更新源：
-#   komari-agent --update-repo LHDyx/komari-agent   （并去掉 --disable-auto-update）
+#   内嵌版本    = <正式 tag>-0.custom.<yymmddhhMM>    例如 1.5.11-0.custom.2611161100
+#   Release tag = <正式 tag>-custom.<yymmddhhMM>      例如 1.5.11-custom.2611161100
+# 基础版本与官方同步、不领先；Release tag 按时间递增，内嵌版本严格更低，
+# 因此更新器可把后续自构建识别为"更新"（自建仓库下自动允许预发布）：
+#   komari-agent --update-repo LHDyx/komari-agent   （默认值已是该仓库，可省略）
 # 本工作流不做官方 snapshot 那样的 "必须等于上游 main" 校验，fork 的改动可以直接构建。
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: '内嵌版本号（留空自动生成 <最近正式tag+1patch>+custom.<时间>.<sha>）'
+        description: '内嵌版本号（留空自动生成 <最近正式tag>-0.custom.<时间>）'
         required: false
         type: string
       publish:
@@ -42,7 +43,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       reltag: ${{ steps.version.outputs.reltag }}
-      stamp: ${{ steps.version.outputs.stamp }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -65,32 +65,29 @@ jobs:
             echo "WARNING: 未找到形如 x.y.z 的正式 tag，回退到 0.0.0" >&2
             CURRENT_LINE="0.0.0"
           fi
-          # 基础版本 = 最近正式 tag +1 个 patch（1.5.11 -> 1.5.12），内嵌版本用它。
-          # 保持同一 minor 线：更新器只在当前 major.minor 内查找候选（targetCurrentLine）。
-          # 注意 blang/semver 的怪癖：`1.5.12-custom.123` 这类 alpha+数字的预发布
-          # 会被判定为 *小于* `1.5.12`，因此 Release tag 必须再抬一个 patch（见下）。
+          # 基础版本 = 最近正式 tag（与官方同步，不领先）。
           MAJOR="${CURRENT_LINE%%.*}"
           REST="${CURRENT_LINE#*.}"
           MINOR="${REST%%.*}"
-          PATCH="${REST##*.}"
-          BASE="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          BASE="${CURRENT_LINE}"
 
-          # 二进制内嵌版本 = 官方基础版本 + build 元数据（1.5.12+custom.2611160949.d4f4eda）。
-          # 与原版只有 build 元数据之分，面板上能一眼看出是自构建。
+          # 二进制内嵌版本：<基础版本>-0.custom.<时间戳>
+          # 带一级预发布 "0"，使内嵌版本严格低于同号正式版和任何 1.5.11-custom.* 自构建 tag，
+          # 这样更新器才会把后续自构建当成"更新"（blang/semver 里 alpha+数字 的预发布低于同号正式版）。
+          # 面板显示的仍是 1.5.11-0.custom.<时间戳>，一看就知道是自构建。
           if [ -n "${INPUT_VERSION}" ]; then
             VERSION="${INPUT_VERSION}"
           else
-            VERSION="${BASE}+custom.${TS}.${SHA}"
+            VERSION="${BASE}-0.custom.${TS}"
           fi
 
-          # Release tag = 基础版本再 +1 个 patch + 预发布标识（1.5.12 -> 1.5.13-custom.2611160949）。
-          # 更新器只认 semver：1.5.13-custom.* 严格大于内嵌的 1.5.12+custom.*，且按时间递增，
-          # 因此 agent 会看到"有更新"并升级到最新一次自构建。
-          RELTAG="${MAJOR}.${MINOR}.$((PATCH + 2))-custom.${TS}"
+          # Release tag：<基础版本>-custom.<时间戳>（如 1.5.11-custom.2611161046）。
+          # 与官方 1.5.11 同一基础版本号，不领先；按时间戳递增，
+          # 更新器在 allowPrerelease（--update-repo 指向自建仓库时自动开启）下可选中最新一次。
+          RELTAG="${BASE}-custom.${TS}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "reltag=${RELTAG}" >> "$GITHUB_OUTPUT"
-          echo "stamp=${TS}-${SHA}" >> "$GITHUB_OUTPUT"
           echo "Embedded version: ${VERSION}"
           echo "Release tag:      ${RELTAG}"
 
@@ -165,7 +162,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELTAG: ${{ needs.prepare.outputs.reltag }}
-          STAMP: ${{ needs.prepare.outputs.stamp }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
