@@ -1,24 +1,24 @@
 name: Custom Cross Build
 
 # 个人 fork 用的交叉编译工作流：覆盖与官方 build_all.sh 完全一致的全部平台组合，
-# 产物同时上传为 Artifact，并滚动发布到固定 tag 的 Release（每次覆盖，可用 curl 直接下载）。
+# 产物上传为 Artifact，并发布为预发布 Release。
 #
-# 与官方的区别：
-#   - 只在本仓库手动触发，或推送到 main 时触发；
-#   - 不做任何 "必须等于上游 main" 的校验，fork 的改动可以直接构建；
-#   - 版本号默认取最近一次正式 tag，可用 version 输入覆盖。
-#
-# 安装后必须在服务端加 --disable-auto-update，否则官方自动更新会覆盖自编译版本。
+# 版本号约定（见 CUSTOM-BUILD.md）：
+#   内嵌版本    = <最近正式 tag +1 patch>+custom.<yymmddhhMM>.<sha>      例如 1.5.12+custom.2611160949.d4f4eda
+#   Release tag = <最近正式 tag +2 patch>-custom.<yymmddhhMM>            例如 1.5.13-custom.2611160949
+# 两者都是合法 semver；Release tag 在该 minor 线内按时间递增，可作为自更新源：
+#   komari-agent --update-repo LHDyx/komari-agent   （并去掉 --disable-auto-update）
+# 本工作流不做官方 snapshot 那样的 "必须等于上游 main" 校验，fork 的改动可以直接构建。
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: '嵌入式版本号（留空则自动取最近一次正式 tag）'
+        description: '内嵌版本号（留空自动生成 <最近正式tag+1patch>+custom.<时间>.<sha>）'
         required: false
         type: string
       publish:
-        description: '是否发布到滚动 Release'
+        description: '是否发布 Release（关闭则只上传 Artifact）'
         required: false
         type: boolean
         default: true
@@ -32,10 +32,6 @@ on:
 permissions:
   contents: write
 
-env:
-  RELEASE_TAG: custom
-  RELEASE_TITLE: Custom Build
-
 concurrency:
   group: custom-build-${{ github.ref }}
   cancel-in-progress: true
@@ -45,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      reltag: ${{ steps.version.outputs.reltag }}
       stamp: ${{ steps.version.outputs.stamp }}
     steps:
       - name: Checkout code
@@ -58,31 +55,41 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          STAMP="custom-$(date -u +%y%m%d%H%M)-$(git rev-parse --short HEAD)"
+          # 时间戳 yymmddhhMM（UTC）。Release tag 按它递增，保证每次构建都比上一次大。
+          TS="$(date -u +%y%m%d%H%M)"
+          SHA="$(git rev-parse --short HEAD)"
+          CURRENT_LINE="$(git describe --tags --abbrev=0 --exclude='Snapshot-*' --exclude='*-custom.*' 2>/dev/null || true)"
+          if ! printf '%s\n' "${CURRENT_LINE}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            CURRENT_LINE="0.0.0"
+          fi
+          # 基础版本 = 最近正式 tag +1 个 patch（1.5.11 -> 1.5.12），内嵌版本用它。
+          # 保持同一 minor 线：更新器只在当前 major.minor 内查找候选（targetCurrentLine）。
+          # 注意 blang/semver 的怪癖：`1.5.12-custom.123` 这类 alpha+数字的预发布
+          # 会被判定为 *小于* `1.5.12`，因此 Release tag 必须再抬一个 patch（见下）。
+          MAJOR="${CURRENT_LINE%%.*}"
+          REST="${CURRENT_LINE#*.}"
+          MINOR="${REST%%.*}"
+          PATCH="${REST##*.}"
+          BASE="${MAJOR}.${MINOR}.$((PATCH + 1))"
+
+          # 二进制内嵌版本 = 官方基础版本 + build 元数据（1.5.12+custom.2611160949.d4f4eda）。
+          # 与原版只有 build 元数据之分，面板上能一眼看出是自构建。
           if [ -n "${INPUT_VERSION}" ]; then
             VERSION="${INPUT_VERSION}"
           else
-            BASE="$(git describe --tags --abbrev=0 --exclude='Snapshot-*' 2>/dev/null || true)"
-            if [ -n "${BASE}" ]; then
-              # 在最近正式 tag 上 +1 个 patch，追加 build 元数据（1.5.11 -> 1.5.12+custom.2611161200.ddbdbdc）。
-              # build 元数据不参与 semver 比较，因此：
-              #   - 比官方 1.5.11 新，比官方后续 1.5.12 旧（届时自动更新会把它升级成官方版，符合预期）；
-              #   - 不会被识别为预发布。
-              # 若 tag 不是 x.y.z 形式，退化为 build 元数据形式 <tag>+custom....
-              if printf '%s\n' "${BASE}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-                PATCH="${BASE##*.}"
-                STEM="${BASE%.*}"
-                VERSION="${STEM}.$((PATCH + 1))+${STAMP//-/.}"
-              else
-                VERSION="${BASE}+${STAMP//-/.}"
-              fi
-            else
-              VERSION="0.0.0+${STAMP//-/.}"
-            fi
+            VERSION="${BASE}+custom.${TS}.${SHA}"
           fi
+
+          # Release tag = 基础版本再 +1 个 patch + 预发布标识（1.5.12 -> 1.5.13-custom.2611160949）。
+          # 更新器只认 semver：1.5.13-custom.* 严格大于内嵌的 1.5.12+custom.*，且按时间递增，
+          # 因此 agent 会看到"有更新"并升级到最新一次自构建。
+          RELTAG="${MAJOR}.${MINOR}.$((PATCH + 2))-custom.${TS}"
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "reltag=${RELTAG}" >> "$GITHUB_OUTPUT"
+          echo "stamp=${TS}-${SHA}" >> "$GITHUB_OUTPUT"
           echo "Embedded version: ${VERSION}"
+          echo "Release tag:      ${RELTAG}"
 
   build:
     needs: prepare
@@ -154,25 +161,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          RELTAG: ${{ needs.prepare.outputs.reltag }}
           STAMP: ${{ needs.prepare.outputs.stamp }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -alR artifacts
-          NOTES="Custom build ${VERSION} from ${REPO}@${GITHUB_SHA} (${STAMP}).
-          Built ${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}.
-          This is a personal build, not an official Komari Agent release.
-          Installer/updater assets are named komari-agent-<os>-<arch> as usual."
+          NOTES="Custom build of Komari Agent.
 
-          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            echo "Replacing existing ${RELEASE_TAG} release assets..."
-            gh release delete "${RELEASE_TAG}" --repo "${REPO}" --cleanup-tag --yes
-          fi
+          - Embedded version: \`${VERSION}\`
+          - Release tag: \`${RELTAG}\`
+          - Source: ${REPO}@${GITHUB_SHA}
+          - Actions run: ${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}
 
-          gh release create "${RELEASE_TAG}" \
+          Personal build, not an official Komari Agent release. Assets follow the official naming
+          (\`komari-agent-<os>-<arch>\`), so it can be used as an auto-update source via
+          \`--update-repo ${REPO}\`."
+
+          # 保留最近若干次自构建 Release，供作为更新源时按 semver 递增选择；其余清理。
+          KEEP=10
+          mapfile -t OLD < <(gh release list --repo "${REPO}" --limit 100 \
+            --json tagName --jq '.[].tagName' | grep -E -- '-custom\.[0-9]{10,}$' | sort -r | tail -n +$((KEEP + 1)) || true)
+          for tag in "${OLD[@]:-}"; do
+            [ -n "${tag}" ] || continue
+            echo "Deleting old custom release ${tag}..."
+            gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
+          done
+
+          # prerelease=true：agent 的稳定通道会跳过预发布，只有在显式指定该版本时才可取用；
+          # 版本号仍可正常解析比较（1.5.11-custom.* > 1.5.11）。
+          gh release create "${RELTAG}" \
             --repo "${REPO}" \
             --target "${GITHUB_SHA}" \
-            --title "${RELEASE_TITLE} (${VERSION})" \
+            --title "Custom Build (${VERSION})" \
             --notes "${NOTES}" \
+            --prerelease \
             --latest=false \
             artifacts/komari-agent-*

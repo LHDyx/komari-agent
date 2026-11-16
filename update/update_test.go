@@ -607,3 +607,62 @@ func testRelease(tag string, prerelease, draft bool, publishedAt time.Time, asse
 		Assets:      assets,
 	}
 }
+
+// TestCustomBuildVersionLine 固定自构建版本号的语义：
+// 内嵌版本 1.5.12+custom.<ts>.<sha> 与 1.5.12 相等（build 元数据不参与比较）。
+// Release tag 用 1.5.13-custom.<ts>：blang/semver 把 "alpha+数字" 的预发布判为小于同号正式版，
+// 所以 1.5.12-custom.* 低于内嵌版本、不会被选中；抬一个 patch 后 1.5.13-custom.* 严格更大，
+// 且按时间递增，可作为自构建之间的更新源。
+// 注意：targetCurrentLine 只认 major.minor，tag 的 patch 不参与 matches()。
+func TestCustomBuildVersionLine(t *testing.T) {
+	current, err := parseVersion("1.5.12+custom.2611160949.d4f4eda")
+	if err != nil {
+		t.Fatalf("current version should parse: %v", err)
+	}
+	target := updateTarget{kind: targetCurrentLine, version: current}
+
+	cases := []struct {
+		tag  string
+		want bool
+	}{
+		{"1.5.11", false},
+		{"1.5.12", false},
+		{"1.5.12+custom.2611161000.abcdef0", false},
+		{"1.5.12-custom.2611160949", false},
+		{"1.5.12-custom.2611161000", false},
+		{"1.5.13-custom.2611161000", true},
+		{"1.5.13", true},
+		{"1.6.0", false},
+		{"1.4.99-custom.2611161000", false},
+	}
+	for _, c := range cases {
+		latest, err := parseVersion(c.tag)
+		if err != nil {
+			t.Fatalf("tag %q should parse: %v", c.tag, err)
+		}
+		if got := stableNeedsUpdate(&current, latest, target); got != c.want {
+			t.Errorf("stableNeedsUpdate(current=%s, latest=%s) = %v, want %v", current, c.tag, got, c.want)
+		}
+	}
+}
+
+func TestSetRepo(t *testing.T) {
+	orig := Repo
+	t.Cleanup(func() { Repo = orig })
+
+	if err := SetRepo("LHDyx/komari-agent"); err != nil {
+		t.Fatalf("SetRepo() unexpected error: %v", err)
+	}
+	if Repo != "LHDyx/komari-agent" {
+		t.Fatalf("Repo = %q, want LHDyx/komari-agent", Repo)
+	}
+
+	for _, bad := range []string{"", "no-slash", "a/b/c", "/agent", "owner/"} {
+		if err := SetRepo(bad); err == nil {
+			t.Errorf("SetRepo(%q) expected error, got nil", bad)
+		}
+	}
+	if Repo != "LHDyx/komari-agent" {
+		t.Fatalf("invalid SetRepo call must not change Repo, got %q", Repo)
+	}
+}
