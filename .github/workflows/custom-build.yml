@@ -1,23 +1,26 @@
 name: Custom Cross Build
 
 # 个人 fork 用的交叉编译工作流：覆盖与官方 build_all.sh 完全一致的全部平台组合，
-# 产物上传为 Artifact，并发布为预发布 Release。
+# 产物上传为 Artifact，并按类型发布 Release。
 #
-# 版本号约定（见 CUSTOM-BUILD.md）：
-#   内嵌版本    = <正式 tag>-0.custom.<yymmddhhMM>    例如 1.5.11-0.custom.2611161100
-#   Release tag = <正式 tag>-custom.<yymmddhhMM>      例如 1.5.11-custom.2611161100
-# 基础版本与官方同步、不领先；Release tag 按时间递增，内嵌版本严格更低，
-# 因此更新器可把后续自构建识别为"更新"（自建仓库下自动允许预发布）：
-#   komari-agent --update-repo LHDyx/komari-agent   （默认值已是该仓库，可省略）
+# 版本号约定（见 CUSTOM-BUILD.md），基础版本与官方同步、不领先，内嵌版本与 tag 完全相同：
+#   预览版（人工替换）  <基础版本>-custom-pre.<i>   例如 1.5.11-custom-pre.1
+#   正式版（自动更新）  <基础版本>-custom.<i>       例如 1.5.11-custom.1
+# 两支 i 各自独立递增，官方换代（基础版本变化）后重置。
+# 自动通道（isCustomReleaseVersion）只接受 -custom.<i>，预览版不会进入自动更新。
 # 本工作流不做官方 snapshot 那样的 "必须等于上游 main" 校验，fork 的改动可以直接构建。
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: '内嵌版本号（留空自动生成 <最近正式tag>-0.custom.<时间>）'
+      kind:
+        description: '构建类型：preview（预览，人工替换）/ release（正式，自动更新）'
         required: false
-        type: string
+        type: choice
+        options:
+          - preview
+          - release
+        default: preview
       publish:
         description: '是否发布 Release（关闭则只上传 Artifact）'
         required: false
