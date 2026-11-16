@@ -9,11 +9,13 @@
 - 已 fork 到 LHDyx/komari-agent，main 跟踪 upstream，SSH 部署密钥可写。
 - 本地新增：`.github/workflows/custom-build.yml`（15 平台在线交叉构建 + 预发布 Release）、
   `sync-upstream.sh`（跟进上游，已 gitignore）、`CUSTOM-BUILD.md`。
-- 代码改动：新增 `--update-repo` / `AGENT_UPDATE_REPO`，可把自动更新源指向自己的 fork（`feat/self-update-repo`）。
+- 代码改动：`--update-repo` / `AGENT_UPDATE_REPO`，**默认更新源已是 LHDyx/komari-agent**；
+  非官方源时打开 allowPrerelease，只接受 tag 含 `-custom.` 的自构建。
+- 版本号：内嵌 `<tag>-0.custom.<时间>`，Release tag `<tag>-custom.<时间>`，基础版本与官方同步、不领先。
 
 ## 红线
 
-- 不加 `--disable-auto-update` 时，自动更新源默认是官方仓，会在 6 小时内覆盖自编译版本。
+- 默认更新源是本 fork；把 `--update-repo` 改回官方时，官方更高版本会覆盖自构建。
 - 产物只自用，不对外分发或提供更新源（AGPL-3.0 + 不冒充官方）。
 - 交叉编译一律 `CGO_ENABLED=0`。
 - `blang/semver` 把 `x.y.z-alpha.123` 判为小于 `x.y.z`（预发布含 alpha+数字），
