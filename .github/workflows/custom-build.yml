@@ -1,0 +1,178 @@
+name: Custom Cross Build
+
+# 个人 fork 用的交叉编译工作流：覆盖与官方 build_all.sh 完全一致的全部平台组合，
+# 产物同时上传为 Artifact，并滚动发布到固定 tag 的 Release（每次覆盖，可用 curl 直接下载）。
+#
+# 与官方的区别：
+#   - 只在本仓库手动触发，或推送到 main 时触发；
+#   - 不做任何 "必须等于上游 main" 的校验，fork 的改动可以直接构建；
+#   - 版本号默认取最近一次正式 tag，可用 version 输入覆盖。
+#
+# 安装后必须在服务端加 --disable-auto-update，否则官方自动更新会覆盖自编译版本。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '嵌入式版本号（留空则自动取最近一次正式 tag）'
+        required: false
+        type: string
+      publish:
+        description: '是否发布到滚动 Release'
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/README.md'
+      - '**.md'
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: custom
+  RELEASE_TITLE: Custom Build
+
+concurrency:
+  group: custom-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      stamp: ${{ steps.version.outputs.stamp }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          STAMP="custom-$(date -u +%y%m%d%H%M)-$(git rev-parse --short HEAD)"
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            BASE="$(git describe --tags --abbrev=0 --exclude='Snapshot-*' 2>/dev/null || true)"
+            if [ -n "${BASE}" ]; then
+              # 在最近正式 tag 上 +1 个 patch，追加 build 元数据（1.5.11 -> 1.5.12+custom.2611161200.ddbdbdc）。
+              # build 元数据不参与 semver 比较，因此：
+              #   - 比官方 1.5.11 新，比官方后续 1.5.12 旧（届时自动更新会把它升级成官方版，符合预期）；
+              #   - 不会被识别为预发布。
+              # 若 tag 不是 x.y.z 形式，退化为 build 元数据形式 <tag>+custom....
+              if printf '%s\n' "${BASE}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                PATCH="${BASE##*.}"
+                STEM="${BASE%.*}"
+                VERSION="${STEM}.$((PATCH + 1))+${STAMP//-/.}"
+              else
+                VERSION="${BASE}+${STAMP//-/.}"
+              fi
+            else
+              VERSION="0.0.0+${STAMP//-/.}"
+            fi
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "Embedded version: ${VERSION}"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 build_all.sh / release.yml 保持一致
+        exclude:
+          - goos: windows
+            goarch: arm
+          - goos: darwin
+            goarch: 386
+          - goos: darwin
+            goarch: arm
+        include:
+          - goos: linux
+            goarch: loong64
+        goos: [windows, linux, darwin, freebsd]
+        goarch: [amd64, arm64, 386, arm]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          BINARY_NAME="komari-agent-${GOOS}-${GOARCH}"
+          if [ "${GOOS}" = "windows" ]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+          fi
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION}" \
+            -o "${BINARY_NAME}"
+          sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: [prepare, build]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          STAMP: ${{ needs.prepare.outputs.stamp }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -alR artifacts
+          NOTES="Custom build ${VERSION} from ${REPO}@${GITHUB_SHA} (${STAMP}).
+          Built ${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}.
+          This is a personal build, not an official Komari Agent release.
+          Installer/updater assets are named komari-agent-<os>-<arch> as usual."
+
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "Replacing existing ${RELEASE_TAG} release assets..."
+            gh release delete "${RELEASE_TAG}" --repo "${REPO}" --cleanup-tag --yes
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --repo "${REPO}" \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_TITLE} (${VERSION})" \
+            --notes "${NOTES}" \
+            --latest=false \
+            artifacts/komari-agent-*
