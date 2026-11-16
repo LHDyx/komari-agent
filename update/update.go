@@ -36,6 +36,19 @@ var (
 	AllowPrerelease bool
 )
 
+// isCustomReleaseVersion 判断版本是否为自构建正式版：<major>.<minor>.<patch>-custom.<i>
+// 且 i 为纯数字。用于把自动通道收敛到 -custom 这一支：
+//   -custom-pre.<i>（预览）、1.5.11（官方）都不满足。
+func isCustomReleaseVersion(v semver.Version) bool {
+	if len(v.Pre) != 2 {
+		return false
+	}
+	if v.Pre[0].IsNum || v.Pre[0].VersionStr != "custom" {
+		return false
+	}
+	return v.Pre[1].IsNum
+}
+
 // IsUpstreamRepo 报告当前更新源是否为官方仓库。
 func IsUpstreamRepo() bool {
 	return Repo == UpstreamRepo
@@ -52,8 +65,9 @@ func SetRepo(slug string) error {
 
 const (
 	snapshotVersionPrefix = "Snapshot-"
-	// customTagMarker 标记自构建版本/标签（如 1.5.11-custom.2611161058）。
-	// 自建仓库允许预发布时，只接受带该标记的候选，避免被官方同名正式版顶掉。
+	// customTagMarker 标记自构建的正式版（如 1.5.11-custom.1）。
+	// 自动通道只接受这一形态：-custom-pre.<i> 是给人手动替换的预览版，
+	// 官方版本（不带该标记）也不会被选中。
 	customTagMarker = "-custom."
 	containerMarkerPath   = "/.komari-agent-container"
 	githubAPIBaseURL      = "https://api.github.com"
@@ -273,8 +287,9 @@ func selectLatestStableRelease(releases []githubRelease, assetName string, targe
 		}
 		if release.Prerelease || len(version.Pre) > 0 {
 			if target.kind != targetExact || len(target.version.Pre) == 0 {
-				// 自建仓库（--update-repo）允许自构建 tag，例如 1.5.11-custom.2601011200。
-				if !target.allowPrerelease {
+				// 自建仓库（--update-repo）只接受 -custom.<i> 这类正式构建；
+				// -custom-pre.<i> 预览版留给人工替换，不进入自动通道。
+				if !target.allowPrerelease || !isCustomReleaseVersion(version) {
 					continue
 				}
 			}
@@ -587,9 +602,9 @@ func stableNeedsUpdate(current *semver.Version, latest semver.Version, target up
 	if !target.matches(latest) {
 		return false
 	}
-	if target.allowPrerelease && target.kind != targetExact && !strings.Contains(latest.String(), customTagMarker) {
-		// 自建仓库模式只跟进本仓库的自构建（tag 带 -custom.）；
-		// 不带该标记的正式版（如官方 1.5.11）一律忽略，避免被顶成官方版。
+	if target.allowPrerelease && target.kind != targetExact && !isCustomReleaseVersion(latest) {
+		// 自建仓库模式只跟进本仓库的正式构建（形如 <base>-custom.<i>）：
+		// -custom-pre.<i>（预览，人工替换）与不带标记的官方版本都不会被自动选中。
 		return false
 	}
 	if target.kind == targetExact {

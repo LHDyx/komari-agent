@@ -608,17 +608,37 @@ func testRelease(tag string, prerelease, draft bool, publishedAt time.Time, asse
 	}
 }
 
-// TestCustomBuildVersionLine 固定自构建版本号与 tag 的语义：
-// 内嵌版本 1.5.11-0.custom.<ts>（基础版本与官方 1.5.11 同步，带一级预发布 "0"），
-// Release tag 1.5.11-custom.<ts>（按时间递增，严格大于内嵌版本）。
-//
-// 自构建版本必然以 "-0.custom." 开头，因此运行时 allowPrerelease 一定为 true（--update-repo 指向自建仓库）；
-// 该模式只跟进带 -custom. 标记的自构建，不会被官方同名正式版顶掉。
-// allowPrerelease=false 的组合仅用于说明官方稳定通道的规则，此时内嵌版本不会被当作自构建。
-func TestCustomBuildVersionLine(t *testing.T) {
-	current, err := parseVersion("1.5.11-0.custom.2611161058")
+// TestCustomReleaseVersion 判定：自动通道只认 <base>-custom.<i>（i 为纯数字）。
+func TestCustomReleaseVersion(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"1.5.11-custom.1", true},
+		{"1.5.11-custom.2", true},
+		{"1.5.11-custom-pre.1", false},
+		{"1.5.11", false},
+		{"1.5.12", false},
+		{"1.5.11-custom", false},
+		{"1.5.11-custom.x", false},
+	}
+	for _, c := range cases {
+		v, err := parseVersion(c.version)
+		if err != nil {
+			t.Fatalf("version %q should parse: %v", c.version, err)
+		}
+		if got := isCustomReleaseVersion(v); got != c.want {
+			t.Errorf("isCustomReleaseVersion(%s) = %v, want %v", c.version, got, c.want)
+		}
+	}
+}
+
+// TestAutoUpdateFollowsCustomReleasesOnly 自动通道（自建仓库、allowPrerelease=true）：
+// 只跟 1.5.11-custom.<i>，跳过 1.5.11-custom-pre.<i> 预览版与官方版本。
+func TestAutoUpdateFollowsCustomReleasesOnly(t *testing.T) {
+	current, err := parseVersion("1.5.11-custom.1")
 	if err != nil {
-		t.Fatalf("current version should parse: %v", err)
+		t.Fatal(err)
 	}
 	target := updateTarget{kind: targetCurrentLine, version: current, allowPrerelease: true}
 
@@ -626,13 +646,15 @@ func TestCustomBuildVersionLine(t *testing.T) {
 		tag  string
 		want bool
 	}{
-		{"1.5.11", false},
+		{"1.5.11-custom.1", false},     // 与自己相等
+		{"1.5.11-custom.2", true},      // 下一个正式版
+		{"1.5.11-custom.3", true},
+		{"1.5.11-custom-pre.3", false}, // 预览版由人工替换
+		{"1.5.11-custom-pre.99", false},
+		{"1.5.11", false},              // 官方同号版本
 		{"1.5.12", false},
-		{"1.6.0", false},
-		{"1.5.11-custom.2611161058", true},
-		{"1.5.11-custom.2611161200", true},
-		{"1.5.12-custom.2611161200", true},
-		{"1.5.10-custom.2611161200", false},
+		{"1.5.12-custom.1", true},      // 官方换代后的正式版
+		{"1.5.10-custom.9", false},     // 回退不升级
 	}
 	for _, c := range cases {
 		latest, err := parseVersion(c.tag)
@@ -643,39 +665,25 @@ func TestCustomBuildVersionLine(t *testing.T) {
 			t.Errorf("stableNeedsUpdate(current=%s, latest=%s) = %v, want %v", current, c.tag, got, c.want)
 		}
 	}
-
-	// 内嵌版本严格低于本次构建自己的 tag，否则更新器永远不会认为"有更新"。
-	tagVersion, err := parseVersion("1.5.11-custom.2611161058")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tagVersion.Compare(current) <= 0 {
-		t.Fatalf("release tag %s must be greater than embedded %s", tagVersion, current)
-	}
 }
 
-// TestSelectCustomBuildRelease 验证自建仓库下的候选选择：
-// 关闭 allowPrerelease 时（官方通道）完全不选自构建，开启后选时间戳最大的那次。
-func TestSelectCustomBuildRelease(t *testing.T) {
+// TestSelectIgnoresPreviewBuilds 候选选择同样不把 -custom-pre.<i> 当作自动更新目标。
+func TestSelectIgnoresPreviewBuilds(t *testing.T) {
 	asset := expectedAssetName(runtime.GOOS, runtime.GOARCH)
 	releases := []githubRelease{
-		testRelease("1.5.11-custom.2611161058", true, false, time.Unix(1763360000, 0), asset),
-		testRelease("1.5.11-custom.2611161200", true, false, time.Unix(1763365000, 0), asset),
+		testRelease("1.5.11-custom.1", true, false, time.Unix(1763360000, 0), asset),
+		testRelease("1.5.11-custom-pre.9", true, false, time.Unix(1763365000, 0), asset),
+		testRelease("1.5.11-custom.2", true, false, time.Unix(1763366000, 0), asset),
 	}
-	current := semver.MustParse("1.5.11-0.custom.2611161058")
-
-	if _, ok := selectLatestStableRelease(releases, asset, updateTarget{kind: targetCurrentLine, version: current}); ok {
-		t.Fatal("stable channel must not select custom prereleases")
-	}
-
+	current := semver.MustParse("1.5.11-custom.1")
 	got, ok := selectLatestStableRelease(releases, asset, updateTarget{
 		kind: targetCurrentLine, version: current, allowPrerelease: true,
 	})
 	if !ok {
-		t.Fatal("allowPrerelease target should select a custom release")
+		t.Fatal("expected a custom release candidate")
 	}
-	if got.TagName != "1.5.11-custom.2611161200" {
-		t.Fatalf("selected %q, want the newest custom build", got.TagName)
+	if got.TagName != "1.5.11-custom.2" {
+		t.Fatalf("selected %q, want 1.5.11-custom.2 (preview must be ignored)", got.TagName)
 	}
 }
 

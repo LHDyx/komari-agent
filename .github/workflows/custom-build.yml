@@ -43,6 +43,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       reltag: ${{ steps.version.outputs.reltag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,44 +53,45 @@ jobs:
       - name: Resolve version
         id: version
         env:
-          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_KIND: ${{ inputs.kind || 'preview' }}
         run: |
           set -euo pipefail
-          # 时间戳 yymmddhhMM（UTC）。Release tag 按它递增，保证每次构建都比上一次大。
-          TS="$(date -u +%y%m%d%H%M)"
-          SHA="$(git rev-parse --short HEAD)"
-          # 只认形如 x.y.z 的正式 tag。不用 git describe --match：其通配符是 fnmatch（无 FNM_PATHNAME），
-          # '*' 能跨过 '.'，所以 '0.0.2-custom.2611' 这类 tag 也会被匹配到；这里直接列出并精确过滤。
-          CURRENT_LINE="$(git tag --merged HEAD --sort=-v:refname | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
-          if [ -z "${CURRENT_LINE}" ]; then
-            echo "WARNING: 未找到形如 x.y.z 的正式 tag，回退到 0.0.0" >&2
-            CURRENT_LINE="0.0.0"
-          fi
           # 基础版本 = 最近正式 tag（与官方同步，不领先）。
-          MAJOR="${CURRENT_LINE%%.*}"
-          REST="${CURRENT_LINE#*.}"
-          MINOR="${REST%%.*}"
-          BASE="${CURRENT_LINE}"
-
-          # 二进制内嵌版本：<基础版本>-0.custom.<时间戳>
-          # 带一级预发布 "0"，使内嵌版本严格低于同号正式版和任何 1.5.11-custom.* 自构建 tag，
-          # 这样更新器才会把后续自构建当成"更新"（blang/semver 里 alpha+数字 的预发布低于同号正式版）。
-          # 面板显示的仍是 1.5.11-0.custom.<时间戳>，一看就知道是自构建。
-          if [ -n "${INPUT_VERSION}" ]; then
-            VERSION="${INPUT_VERSION}"
-          else
-            VERSION="${BASE}-0.custom.${TS}"
+          # 不用 git describe --match：其通配符是 fnmatch（无 FNM_PATHNAME），'*' 能跨过 '.'。
+          BASE="$(git tag --merged HEAD --sort=-v:refname | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+          if [ -z "${BASE}" ]; then
+            echo "WARNING: 未找到形如 x.y.z 的正式 tag，回退到 0.0.0" >&2
+            BASE="0.0.0"
           fi
 
-          # Release tag：<基础版本>-custom.<时间戳>（如 1.5.11-custom.2611161046）。
-          # 与官方 1.5.11 同一基础版本号，不领先；按时间戳递增，
-          # 更新器在 allowPrerelease（--update-repo 指向自建仓库时自动开启）下可选中最新一次。
-          RELTAG="${BASE}-custom.${TS}"
+          # 序号 i 从现有 tag 推断，两支各自独立递增，且只统计当前基础版本：
+          #   预览 <BASE>-custom-pre.<i>   正式 <BASE>-custom.<i>
+          # 官方换代（BASE 变化）后自动从头开始，例如 1.5.12-custom-pre.1。
+          case "${INPUT_KIND}" in
+            release)
+              PREFIX="${BASE}-custom"
+              LAST="$(git tag -l "${BASE}-custom.[0-9]*" | sed -nE "s/^${BASE}-custom\\.([0-9]+)$/\\1/p" | sort -n | tail -n 1 || true)"
+              ;;
+            *)
+              PREFIX="${BASE}-custom-pre"
+              LAST="$(git tag -l "${BASE}-custom-pre.[0-9]*" | sed -nE "s/^${BASE}-custom-pre\\.([0-9]+)$/\\1/p" | sort -n | tail -n 1 || true)"
+              ;;
+          esac
+          NEXT=$(( ${LAST:-0} + 1 ))
+
+          # 二进制内嵌版本与 tag 完全一致：相等不会被判为"有更新"，不会重复安装。
+          VERSION="${PREFIX}.${NEXT}"
+          if [ "${INPUT_KIND}" = "release" ]; then
+            PRE=false
+          else
+            PRE=true
+          fi
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "reltag=${RELTAG}" >> "$GITHUB_OUTPUT"
+          echo "reltag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRE}" >> "$GITHUB_OUTPUT"
           echo "Embedded version: ${VERSION}"
-          echo "Release tag:      ${RELTAG}"
+          echo "Release tag:      ${VERSION} (prerelease=${PRE})"
 
   build:
     needs: prepare
@@ -162,11 +164,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELTAG: ${{ needs.prepare.outputs.reltag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -alR artifacts
-          NOTES="Custom build of Komari Agent.
+          KIND_TEXT=preview; [ "${PRERELEASE}" = "true" ] || KIND_TEXT=release
+          NOTES="Custom build of Komari Agent (${KIND_TEXT}).
 
           - Embedded version: \`${VERSION}\`
           - Release tag: \`${RELTAG}\`
@@ -175,31 +179,28 @@ jobs:
 
           Personal build, not an official Komari Agent release. Assets follow the official naming
           (\`komari-agent-<os>-<arch>\`), so it can be used as an auto-update source via
-          \`--update-repo ${REPO}\`."
+          \`--update-repo ${REPO}\`.
 
-          # 清理历史遗留的固定 tag 版 Release（早期方案用的 tag "custom"）。
-          if gh release view custom --repo "${REPO}" >/dev/null 2>&1; then
-            echo "Deleting legacy release 'custom'..."
-            gh release delete custom --repo "${REPO}" --cleanup-tag --yes || true
-          fi
+          Tag scheme: \`<official tag>-custom-pre.<i>\` is a preview build (replace manually),
+          \`<official tag>-custom.<i>\` is a release build (picked up by automatic updates).
+          Automatic updates only follow the \`-custom.<i>\` line."
 
-          # 保留最近若干次自构建 Release，供作为更新源时按 semver 递增选择；其余清理。
-          KEEP=10
-          mapfile -t OLD < <(gh release list --repo "${REPO}" --limit 100 \
-            --json tagName --jq '.[].tagName' | grep -E -- '-custom\.[0-9]{10,}$' | sort -r | tail -n +$((KEEP + 1)) || true)
-          for tag in "${OLD[@]:-}"; do
+          # 清理不符合当前方案的旧 Release/tag，避免它们被自动通道误选：
+          # 只保留 <base>-custom.<i>（正式）与 <base>-custom-pre.<i>（预览），
+          # 其余带 -custom 的旧格式（时间戳/额外段）以及早期的 "custom" 固定 tag 全部删除。
+          mapfile -t STALE < <(gh release list --repo "${REPO}" --limit 200 \
+            --json tagName --jq '.[].tagName' \
+            | { grep -E -- '-custom' || true; } \
+            | { grep -EvE -- '^[0-9]+\.[0-9]+\.[0-9]+-custom(-pre)?\.[0-9]+$' || true; })
+          for tag in "${STALE[@]:-}"; do
             [ -n "${tag}" ] || continue
-            echo "Deleting old custom release ${tag}..."
+            echo "Deleting stale release ${tag}..."
             gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
           done
 
-          # prerelease=true：agent 的稳定通道会跳过预发布，只有在显式指定该版本时才可取用；
-          # 版本号仍可正常解析比较（1.5.11-custom.* > 1.5.11）。
-          gh release create "${RELTAG}" \
-            --repo "${REPO}" \
-            --target "${GITHUB_SHA}" \
-            --title "Custom Build (${VERSION})" \
-            --notes "${NOTES}" \
-            --prerelease \
-            --latest=false \
-            artifacts/komari-agent-*
+          # 预览版标 prerelease；正式版不标。
+          FLAGS=(--repo "${REPO}" --target "${GITHUB_SHA}" --title "Custom Build (${VERSION})" --notes "${NOTES}" --latest=false)
+          if [ "${PRERELEASE}" = "true" ]; then
+            FLAGS+=(--prerelease)
+          fi
+          gh release create "${RELTAG}" "${FLAGS[@]}" artifacts/komari-agent-*
