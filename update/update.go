@@ -28,8 +28,19 @@ var ErrRestartRequired = errors.New("update installed; restart required")
 
 var (
 	CurrentVersion string = "0.0.1"
-	Repo           string = "komari-monitor/komari-agent"
+	// UpstreamRepo 是上游仓库；Repo 是更新器实际查询的仓库，可在运行时通过 --update-repo 覆盖。
+	UpstreamRepo string = "komari-monitor/komari-agent"
+	Repo         string = UpstreamRepo
 )
+
+// SetRepo 切换自动更新所查询的仓库（owner/name）。调用方负责校验格式。
+func SetRepo(slug string) error {
+	if _, _, err := splitRepoSlug(strings.TrimSpace(slug)); err != nil {
+		return err
+	}
+	Repo = strings.TrimSpace(slug)
+	return nil
+}
 
 const (
 	snapshotVersionPrefix = "Snapshot-"
