@@ -11,7 +11,8 @@
   `sync-upstream.sh`（跟进上游，已 gitignore）、`CUSTOM-BUILD.md`。
 - 代码改动：`--update-repo` / `AGENT_UPDATE_REPO`，**默认更新源已是 LHDyx/komari-agent**；
   非官方源时打开 allowPrerelease，只接受 tag 含 `-custom.` 的自构建。
-- 版本号：内嵌 `<tag>-0.custom.<时间>`，Release tag `<tag>-custom.<时间>`，基础版本与官方同步、不领先。
+- 版本号：预览 `<base>-custom-pre.<i>`，正式 `<base>-custom.<i>`，两支 i 独立计数；内嵌版本与 tag 相同。
+  自动通道（`isCustomReleaseVersion`）只接受 `<base>-custom.<i>`，预览版只供人工替换。
 
 ## 红线
 
