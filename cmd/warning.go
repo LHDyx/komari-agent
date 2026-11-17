@@ -19,6 +19,12 @@ const (
 	warningUninstallURL = "https://komari-document.pages.dev/en/faq/uninstall"
 )
 
+// securityWarningEnabled 决定是否显示远程控制安全提示。
+// 默认关闭（EnableSecurityWarning=false）；--disable-web-ssh 时始终关闭。
+func securityWarningEnabled() bool {
+	return flags.EnableSecurityWarning && !flags.DisableWebSsh
+}
+
 type securityWarning struct {
 	PanelHost string
 	RunAsUser string

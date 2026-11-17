@@ -94,6 +94,7 @@ main() → cmd.Execute() → RootCmd.RunE
 | `--config` | `AGENT_CONFIG_FILE` | — | JSON 配置路径 |
 | `--auto-discovery` | 同名 | — | 自动注册密钥 |
 | `--update-repo` | `AGENT_UPDATE_REPO` | `LHDyx/komari-agent`（本 fork 默认） | 自更新源仓库 |
+| `--enable-security-warning` | `AGENT_ENABLE_SECURITY_WARNING` | **false**（本 fork 默认关闭） | 显示远程控制安全提示（Linux MOTD / Windows Toast） |
 
 辅助：`check-mem`（内存口径对比）、`list-disk`。
 
@@ -135,8 +136,9 @@ POST 回退模式下并行两件事：
 
 1. **无入站端口**：所有能力只能由持 token 的面板经长连接触发
 2. **`--disable-web-ssh` 总闸**：命令、终端、文件、切版本全部拒绝
-3. **安装后安全提示**：
-   - Linux：向 `/etc/motd` 追加警示（面板地址 + 运行账号 + 卸载链接），关闭远程控制时移除
+3. **安装后安全提示（本 fork 默认关闭）**：需显式加 `--enable-security-warning` 才启用
+   - Linux：向 `/etc/motd` 追加警示（面板地址 + 运行账号 + 卸载链接），关闭远程控制时移除；
+     关闭该开关启动时会清理旧版本已写入的提示
    - Windows：向每个交互会话弹 Toast（详见 [windows-notification.md](windows-notification.md)）
    - macOS / FreeBSD：无提示
 4. **不泄露凭据**：通知辅助进程不读取配置；启动配置回传与错误日志避免输出 token
