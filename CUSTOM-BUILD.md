@@ -25,7 +25,8 @@
 
 `.github/workflows/custom-build.yml`：
 
-- 推送到 `main` 默认发布**预览版**；在 Actions 页面手动 `Run workflow` 可选 `preview` / `release`；
+- **只在 Actions 页面手动触发**（推送 main 不会构建）；`kind` 选 `preview` 或 `release`；
+- 上游继承来的 `Build on Main`、`Publish Snapshot` 也已改为仅手动触发，避免每次推送跑 40+ 个任务；
 - 平台组合与官方 `build_all.sh` 完全一致（windows/linux/darwin/freebsd × amd64/arm64/386/arm，
   排除 windows/arm、darwin/386、darwin/arm，外加 linux/loong64，共 15 个）；
 - 产物同时作为 Artifact 上传，并发布为 Release；发布时会清理不符合当前命名方案的旧 Release。
@@ -78,14 +79,18 @@ komari-agent --endpoint ... --update-repo komari-monitor/komari-agent    # 切�
 
 ## 本地编译
 
+日常改动用脚本构建验证，不消耗 Actions 额度：
+
 ```bash
-export PATH=/home/dyx/toolchains/go1.25.11/bin:$PATH
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
-  -ldflags="-s -w -X github.com/komari-monitor/komari-agent/update.CurrentVersion=$(git describe --tags --abbrev=0)-local" \
-  -o build/komari-agent-linux-arm64 .
+./build-local.sh                          # 默认 linux/amd64
+./build-local.sh linux/amd64 linux/arm64  # 指定目标
+VERSION=1.5.11-custom.9 ./build-local.sh  # 指定内嵌版本号
 ```
 
-`CGO_ENABLED=0` 必需（项目本身也不依赖 CGO），产物是静态链接。
+产物在 `build/`（已 gitignore），每个二进制带同名 `.sha256`。默认内嵌版本为
+`<最近正式tag>-local.<sha>`，可直接 `./build/komari-agent-linux-amd64 --endpoint ...` 试跑。
+
+等改动确认后再手动触发 Actions 发布预览版/正式版。
 
 ## 红线
 
