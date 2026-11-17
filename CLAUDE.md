@@ -3,9 +3,17 @@
 这是 LHDyx 对 [komari-monitor/komari-agent](https://github.com/komari-monitor/komari-agent) 的个人 fork，
 目的是小改后用在自己的服务器上。构建方式、跟进上游、版本号规则见 `CUSTOM-BUILD.md`。
 
-## 当前状态（2026-11-16）
+完整文档见 `docs/`：
 
-- 已完整克隆上游，HEAD = `ddbdbdc`（对应 `Snapshot-2610260110`，最近正式 tag 为 `1.5.11`）。
+- `docs/overview.md` 项目结构、启动流程、配置、连接与自更新
+- `docs/monitoring-and-control.md` 指标、协议、命令/终端/文件
+- `docs/install.md` 安装脚本逐段行为、各平台服务、Docker
+- `docs/windows-notification.md` Windows 安装后 Toast 通知的完整行为
+
+## 当前状态（2026-11-17）
+
+- 基于上游 `ddbdbdc`，本地已叠加自改提交；最近正式 tag 为 `1.5.11`。
+- 已发布 `1.5.11-custom.1`（正式）与 `1.5.11-custom-pre.1~4`（预览）。
 - 已 fork 到 LHDyx/komari-agent，main 跟踪 upstream，SSH 部署密钥可写。
 - 本地新增：`.github/workflows/custom-build.yml`（15 平台在线交叉构建 + 预发布 Release）、
   `sync-upstream.sh`（跟进上游，已 gitignore）、`build-local.sh`（本地交叉编译）、`CUSTOM-BUILD.md`。
