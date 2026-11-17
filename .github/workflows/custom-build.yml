@@ -26,12 +26,8 @@ on:
         required: false
         type: boolean
         default: true
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/workflows/README.md'
-      - '**.md'
+  # 只手动触发：避免每次推送都构建并产生预览版。
+  # 日常改动请在本地用 ./build-local.sh 编译验证。
 
 permissions:
   contents: write
