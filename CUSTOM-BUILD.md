@@ -3,6 +3,9 @@
 本目录是 [komari-monitor/komari-agent](https://github.com/komari-monitor/komari-agent) 的个人 fork，
 用于自改 + 交叉编译后自用。上游代码 **AGPL-3.0**，本 fork 只自用、不再分发。
 
+项目功能与流程见 `docs/`（`overview.md`、`monitoring-and-control.md`、`install.md`、
+`windows-notification.md`）。
+
 ## 远程仓库
 
 | remote | 地址 | 用途 |

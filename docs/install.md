@@ -1,0 +1,134 @@
+# 安装与部署
+
+## 一、Linux / macOS / FreeBSD：`install.sh`
+
+### 1. 参数
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LHDyx/komari-agent/main/install.sh | bash -s -- -e <面板> -t <token>
+
+# 安装相关参数（--install-*）
+--install-dir <目录>          安装目录
+--install-service-name <名>   服务名，默认 komari-agent
+--install-ghproxy <前缀>      GitHub 代理前缀
+--install-version <版本>      指定版本，或 snapshot
+--install-no-mirror           关闭自动镜像回退
+# 其余参数原样传给 agent（-e / -t / --disable-auto-update ...）
+```
+
+### 2. 安装位置与服务类型
+
+| 身份 / 系统 | 安装目录 | 服务 |
+| --- | --- | --- |
+| root + Linux | `/opt/komari` | systemd 系统服务 |
+| 普通用户 + Linux | `${XDG_DATA_HOME:-~/.local/share}/komari` | systemd 用户服务 |
+| macOS + root | `/usr/local/komari` | LaunchDaemon |
+| macOS + 用户 | `~/.komari`（`/usr/local` 不可写时） | LaunchAgent |
+| FreeBSD | `/opt/komari` | OpenRC / rc |
+| Windows (MSYS) | `/c/komari` | 脚本不注册服务 |
+
+服务运行账号默认是 `SUDO_USER`（sudo 前的用户），不是 root。
+
+### 3. 执行步骤
+
+1. **检测系统与架构**：`uname -m` → `amd64 / arm64 / 386 / arm / loong64`
+2. **检查依赖**：`curl`，缺失时按 `apt / yum / apk / opkg / brew` 自动安装
+3. **解析版本**：`latest` / 指定版本 / `snapshot`（查 GitHub API 找最新 `Snapshot-*`）
+4. **下载**：`releases/<版本>/komari-agent-<os>-<arch>`
+   - 直连失败自动依次尝试 `ghfast.top`、`gh-proxy.com`、`ghproxy.net`
+   - `--install-ghproxy` 指定代理；`--install-no-mirror` 禁用回退
+   - **脚本不校验 sha256**，只检查文件非空
+5. **清理旧安装**：停止并删除旧服务单元、旧二进制
+   - 不会删除 `net_static.json`、`config.json`、`auto-discovery.json`
+6. **写入服务单元并启动**
+
+### 4. 各 init 系统的服务定义
+
+| init | 关键配置 |
+| --- | --- |
+| systemd | `Type=simple`、`Restart=always`、`WorkingDirectory=<安装目录>`、`User=<服务用户>` |
+| systemd --user | 同上，`WantedBy=default.target` |
+| OpenRC | `supervise-daemon`、`retry=SIGTERM/30` |
+| procd（OpenWrt） | 参数逐个 `procd_append_param`、`respawn`、`user` |
+| launchd | plist、`RunAtLoad`、`KeepAlive`，日志到 `~/Library/Logs` 或 `/var/log` |
+| Upstart | `respawn limit 10 5` |
+| NixOS | 不写服务，打印声明式配置片段 |
+
+`Restart=always` / `respawn` 是把**退出码 42**（自更新完成）变成平滑升级的关键：
+agent 更新后主动退出，服务管理器立即拉起新版本。
+
+示例（systemd）：
+
+```ini
+[Unit]
+Description=Komari Agent Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/komari/agent -e https://panel.example.com -t xxx
+WorkingDirectory=/opt/komari
+Restart=always
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## 二、Windows：`install.ps1`
+
+1. 默认安装目录 `C:\Program Files\Komari`（可用 `--install-dir` 覆盖）
+2. 准备 **nssm**：PATH 中可用则直接使用，否则下载到安装目录
+3. 停止并移除旧服务（`nssm remove ... confirm`，失败回退 `sc.exe delete`），删除旧二进制
+4. 解析版本（`latest` / 指定 / `snapshot`）并下载 `komari-agent-windows-<arch>.exe`
+5. 用 nssm 注册并启动服务：
+
+```powershell
+nssm install komari-agent C:\Program Files\Komari\komari-agent.exe "-e ... -t ..."
+nssm set komari-agent DisplayName "Komari Agent Service"
+nssm set komari-agent Start SERVICE_AUTO_START
+nssm set komari-agent AppExit Default Restart
+nssm set komari-agent AppRestartDelay 5000
+nssm start komari-agent
+```
+
+6. 服务启动后，agent 会向每个交互式登录会话弹出安全通知（见
+   [windows-notification.md](windows-notification.md)）
+
+注意事项：
+
+- 服务默认以 **LocalSystem** 运行（nssm 默认），因此能向用户会话注入通知进程
+- 命令执行依赖 PowerShell；Web SSH 依赖 ConPTY（Windows 10 1809+）
+- 自更新替换正在运行的服务二进制由 `go-update` 处理，重启由 nssm 负责
+
+## 三、Docker
+
+官方 `Dockerfile`：
+
+```dockerfile
+FROM alpine:3.21
+WORKDIR /app
+COPY --chmod=755 komari-agent-${TARGETOS}-${TARGETARCH} /app/komari-agent
+RUN touch /.komari-agent-container
+ENTRYPOINT ["/app/komari-agent"]
+```
+
+要点：
+
+- **容器内检测到 `/.komari-agent-container` 就跳过自更新**，升级靠换镜像
+- 镜像需要预先放入对应架构的二进制（构建上下文）
+- 监控宿主进程时可设 `HOST_PROC=/host/proc` 并挂载 `/proc`
+- 运行示例：
+
+```bash
+docker run -d --name komari-agent --network host --pid host \
+  -v /proc:/host/proc:ro -e HOST_PROC=/host/proc \
+  ghcr.io/komari-monitor/komari-agent:latest -e https://panel.example.com -t xxx
+```
+
+## 四、安装后建议
+
+1. **校验哈希**：我们的 Release 每个二进制都附带 `.sha256`，官方脚本不校验，建议手动核对
+2. **`--disable-web-ssh`**：如果面板暴露在公网且不需要远程控制
+3. **固定 `--update-repo`**：明确更新源（本 fork 默认即自己的仓库）
+4. **检查工作目录**：流量统计文件写在服务工作目录，迁移前先备份 `net_static.json`
