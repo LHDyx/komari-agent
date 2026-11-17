@@ -132,3 +132,5 @@ docker run -d --name komari-agent --network host --pid host \
 2. **`--disable-web-ssh`**：如果面板暴露在公网且不需要远程控制
 3. **固定 `--update-repo`**：明确更新源（本 fork 默认即自己的仓库）
 4. **检查工作目录**：流量统计文件写在服务工作目录，迁移前先备份 `net_static.json`
+5. **安全提示默认关闭**（本 fork）：需要时加 `--enable-security-warning`；
+   Linux 会写 `/etc/motd`，Windows 会弹 Toast（见 [windows-notification.md](windows-notification.md)）

@@ -36,7 +36,8 @@ func startSecurityWarning(ctx context.Context) func() {
 		return func() {}
 	}
 	removeLegacyUpdateMOTDWarning(legacyUpdateMOTDPath)
-	if flags.DisableWebSsh {
+	// 默认不显示；关闭时同时清理旧版本可能已写入的提示。
+	if !securityWarningEnabled() {
 		if err := removeInstalledMOTDWarning(linuxMOTDPath); err != nil {
 			log.Printf("[warn] could not remove MOTD warning: %v", err)
 		}

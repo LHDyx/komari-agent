@@ -1,8 +1,10 @@
 # Windows 安装后的安全通知行为
 
 > 结论先行：安装脚本本身**不弹通知**。通知由 **agent 服务在启动后**主动向每个交互式登录会话
-> 注入一个辅助进程弹出 Windows Toast，条件是**没有启用 `--disable-web-ssh`**。
-> 安装完成（`nssm start`）后，通常在 **3 秒内**当前已登录的桌面就会看到提示。
+> 注入一个辅助进程弹出 Windows Toast。
+>
+> **本 fork 默认关闭该提示**（上游默认开启）：需要显式加 `--enable-security-warning`
+> 才会弹出。安装完成（`nssm start`）后，通常在 **3 秒内**当前已登录的桌面就会看到提示。
 
 ## 一、触发条件
 
@@ -10,7 +12,8 @@
 | --- | --- |
 | 平台 | 仅 Windows（`//go:build windows`） |
 | 服务已启动 | `install.ps1` 最后执行 `nssm start komari-agent` |
-| 未启用 `--disable-web-ssh` | 启用时 `startSecurityWarning` 直接返回空实现 |
+| 已启用 `--enable-security-warning` | **本 fork 默认 false**，不开启则 `startSecurityWarning` 直接返回 |
+| 未启用 `--disable-web-ssh` | 启用时即使打开提示开关也不显示 |
 | 存在交互式会话 | 会话状态必须是 `WTSActive` 且能取到用户名 |
 | 系统通知可用 | 通知被系统/组策略/专注助手关闭时不会显示 |
 
@@ -30,7 +33,8 @@
 nssm start komari-agent
   └─ agent 服务进程（LocalSystem）
       └─ startSecurityWarning()
-          ├─ flags.DisableWebSsh ? → 直接返回，不通知
+          ├─ !securityWarningEnabled() ? → 直接返回，不通知
+          │   （默认未开启 --enable-security-warning，或已加 --disable-web-ssh）
           └─ go warnWindowsSessions()
               ├─ 启用 SeAssignPrimaryTokenPrivilege / SeIncreaseQuotaPrivilege
               ├─ 每 3 秒枚举 WTS 会话（WTSEnumerateSessionsW，State=WTSActive 且有用户名）
@@ -80,7 +84,7 @@ Uninstall Komari Agent: https://komari-document.pages.dev/en/faq/uninstall
 
 服务进程内维护一个 `seen` 会话集合：
 
-- 服务启动时，**当前所有活跃会话各弹一次**
+- 服务启动时，**当前所有活跃会话各弹一次**（前提是已开启提示）
 - 用户注销后重新登录 → 视为新会话 → 再弹一次
 - **服务重启/升级后会重新弹**（`seen` 重置）；自更新完成会以退出码 42 退出并由 nssm 拉起，
   因此每次自动更新后也会再看到一次通知
@@ -101,14 +105,14 @@ Uninstall Komari Agent: https://komari-document.pages.dev/en/faq/uninstall
 
 通知失败**不影响监控上报**，只是用户看不到提示。
 
-## 七、如何关闭
+## 七、如何开启 / 关闭
 
 | 方式 | 效果 |
 | --- | --- |
-| 服务参数加 `--disable-web-ssh` | 同时关闭命令/终端/文件/切版本，并**完全不弹通知** |
+| **默认（不加任何开关）** | 不显示通知 |
+| `--enable-security-warning`（或 `AGENT_ENABLE_SECURITY_WARNING=true`） | 显示通知 |
+| 服务参数加 `--disable-web-ssh` | 同时关闭命令/终端/文件/切版本，并**始终不弹通知**（优先于开启开关） |
 | 卸载 | 停止服务；服务生成的临时 `.lnk` 正常会在 15 秒后删除，若进程被强行终止可能残留 |
-
-没有单独的“只关通知”开关。
 
 ## 八、与 Linux 的差异
 
