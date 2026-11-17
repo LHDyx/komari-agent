@@ -8,7 +8,8 @@
 - 已完整克隆上游，HEAD = `ddbdbdc`（对应 `Snapshot-2610260110`，最近正式 tag 为 `1.5.11`）。
 - 已 fork 到 LHDyx/komari-agent，main 跟踪 upstream，SSH 部署密钥可写。
 - 本地新增：`.github/workflows/custom-build.yml`（15 平台在线交叉构建 + 预发布 Release）、
-  `sync-upstream.sh`（跟进上游，已 gitignore）、`CUSTOM-BUILD.md`。
+  `sync-upstream.sh`（跟进上游，已 gitignore）、`build-local.sh`（本地交叉编译）、`CUSTOM-BUILD.md`。
+- 所有 GitHub Actions 均已改为**仅手动触发**，推送 main 不构建；日常改动用 `./build-local.sh`。
 - 代码改动：`--update-repo` / `AGENT_UPDATE_REPO`，**默认更新源已是 LHDyx/komari-agent**；
   非官方源时打开 allowPrerelease，只接受 tag 含 `-custom.` 的自构建。
 - 版本号：预览 `<base>-custom-pre.<i>`，正式 `<base>-custom.<i>`，两支 i 独立计数；内嵌版本与 tag 相同。
