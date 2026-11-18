@@ -43,6 +43,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       reltag: ${{ steps.version.outputs.reltag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      base: ${{ steps.version.outputs.base }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -90,6 +91,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "reltag=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRE}" >> "$GITHUB_OUTPUT"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
           echo "Embedded version: ${VERSION}"
           echo "Release tag:      ${VERSION} (prerelease=${PRE})"
 
@@ -165,6 +167,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           RELTAG: ${{ needs.prepare.outputs.reltag }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          BASE: ${{ needs.prepare.outputs.base }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -198,18 +201,18 @@ jobs:
             gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
           done
 
-          # 发布正式版时清理所有预览版：预览只供人工使用，正式版发布后即被取代。
-          # （自动更新通道本来就不选 -custom-pre.*，这里只是保持列表干净。）
-          if [ "${PRERELEASE}" != "true" ]; then
-            mapfile -t PREVIEWS < <(gh release list --repo "${REPO}" --limit 200 \
-              --json tagName --jq '.[].tagName' \
-              | { grep -E -- '-custom-pre\.[0-9]+$' || true; })
-            for tag in "${PREVIEWS[@]:-}"; do
-              [ -n "${tag}" ] || continue
-              echo "Deleting preview release ${tag} (superseded by ${RELTAG})..."
-              gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
-            done
-          fi
+          # 只在官方基础版本换代时清理旧预览版（例如基础版本变为 1.5.12 后删除所有 1.5.11 的预览版）。
+          # 同一基础版本内的预览版保留，GitHub 发布页本来就按时间排序，便于回看。
+          BASE_RE="${BASE//./\\.}"
+          mapfile -t OLD_PREVIEWS < <(gh release list --repo "${REPO}" --limit 200 \
+            --json tagName --jq '.[].tagName' \
+            | { grep -E -- '-custom-pre\.[0-9]+$' || true; } \
+            | { grep -Ev -- "^${BASE_RE}-custom-pre\\.[0-9]+$" || true; })
+          for tag in "${OLD_PREVIEWS[@]:-}"; do
+            [ -n "${tag}" ] || continue
+            echo "Deleting preview release ${tag} from a previous base version (current base: ${BASE})..."
+            gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
+          done
 
           # 预览版标 prerelease；正式版不标。
           FLAGS=(--repo "${REPO}" --target "${GITHUB_SHA}" --title "Custom Build (${VERSION})" --notes "${NOTES}" --latest=false)
