@@ -17,6 +17,7 @@ $KomariArgs = @()
 $InstallVersion = ""
 $AgentRepo = "LHDyx/komari-agent"  # 发布产物来源仓库（owner/name）
 $VerifyChecksum = $true
+$InstallKeepLegacy = $false      # 不自动清理旧版本安装
 
 # Parse script arguments
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -27,6 +28,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--install-version" { $InstallVersion = $args[$i + 1]; $i++; continue }
         "--install-repo" { $AgentRepo = $args[$i + 1]; $i++; continue }
         "--install-no-verify" { $VerifyChecksum = $false; continue }
+        "--install-keep-legacy" { $InstallKeepLegacy = $true; continue }
         Default { $KomariArgs += $args[$i] }
     }
 }
@@ -147,6 +149,86 @@ catch {
     exit 1
 }
 
+# Legacy installation from older defaults (service "komari-agent").
+# Only removed when endpoint + identity (token or auto-discovery key) match,
+# so agents reporting to other panels on the same host are preserved.
+function Get-TextIdentity {
+    param([string]$Text)
+    $Endpoint = [regex]::Match($Text, '(--endpoint|-e)[ =]"?([^"\s]+)"?').Groups[2].Value
+    if (-not $Endpoint) { $Endpoint = [regex]::Match($Text, 'AGENT_ENDPOINT="?([^"\s]+)"?').Groups[1].Value }
+    $Token = [regex]::Match($Text, '(--token|-t)[ =]"?([^"\s]+)"?').Groups[2].Value
+    if (-not $Token) { $Token = [regex]::Match($Text, 'AGENT_TOKEN="?([^"\s]+)"?').Groups[1].Value }
+    $AutoDiscovery = [regex]::Match($Text, '--auto-discovery[ =]"?([^"\s]+)"?').Groups[1].Value
+    if (-not $AutoDiscovery) { $AutoDiscovery = [regex]::Match($Text, 'AGENT_AUTO_DISCOVERY_KEY="?([^"\s]+)"?').Groups[1].Value }
+    [pscustomobject]@{ Endpoint = $Endpoint; Token = $Token; AutoDiscovery = $AutoDiscovery }
+}
+
+function Invoke-LegacyCleanup {
+    param([string[]]$NewArgs)
+    if ($InstallKeepLegacy) {
+        Log-Info "Keeping legacy installations (--install-keep-legacy)."
+        return
+    }
+
+    $LegacyService = "komari-agent"
+    if (-not (Get-Service -Name $LegacyService -ErrorAction SilentlyContinue)) { return }
+
+    $newText = (@($NewArgs) -join ' ')
+    foreach ($name in @('AGENT_ENDPOINT', 'AGENT_TOKEN', 'AGENT_AUTO_DISCOVERY_KEY')) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if ($value) { $newText = "$newText $name=$value" }
+    }
+    $newId = Get-TextIdentity $newText
+
+    $legacyText = ""
+    $legacyApp = ""
+    $params = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$LegacyService\Parameters" -ErrorAction SilentlyContinue
+    if ($params) {
+        if ($params.AppParameters) { $legacyText = [string]$params.AppParameters }
+        if ($params.Application) {
+            $legacyApp = [string]$params.Application
+            $legacyText = "$legacyText $legacyApp"
+        }
+        if ($params.AppEnvironmentExtra) { $legacyText = "$legacyText $([string]$params.AppEnvironmentExtra)" }
+    }
+    $legacyId = Get-TextIdentity $legacyText
+
+    $verdict = "unknown"
+    if ($newId.Endpoint -and $legacyId.Endpoint) {
+        if ($newId.Endpoint.TrimEnd('/') -ne $legacyId.Endpoint.TrimEnd('/')) {
+            $verdict = "mismatch"
+        }
+        elseif ($newId.Token -and $legacyId.Token) {
+            if ($newId.Token -eq $legacyId.Token) { $verdict = "match" } else { $verdict = "mismatch" }
+        }
+        elseif ($newId.AutoDiscovery -and $legacyId.AutoDiscovery) {
+            if ($newId.AutoDiscovery -eq $legacyId.AutoDiscovery) { $verdict = "match" } else { $verdict = "mismatch" }
+        }
+    }
+
+    if ($verdict -ne "match") {
+        if ($verdict -eq "mismatch") {
+            Log-Warning "Legacy agent service '$LegacyService' found but it reports to $($legacyId.Endpoint); leaving it untouched."
+        }
+        else {
+            Log-Warning "Legacy agent service '$LegacyService' found but its endpoint/token cannot be verified; leaving it untouched."
+            Log-Info "Remove it manually if it is the old Komari Agent."
+        }
+        return
+    }
+
+    Log-Info "Removing legacy agent service '$LegacyService' ($($legacyId.Endpoint))..."
+    & $SmExe stop $LegacyService 2>&1 | Out-Null
+    & $SmExe remove $LegacyService confirm 2>&1 | Out-Null
+    if (-not (Get-Service -Name $LegacyService -ErrorAction SilentlyContinue)) {
+        Log-Info "Legacy service removed."
+    }
+    if ($legacyApp -and $legacyApp -ne $AgentPath -and (Test-Path $legacyApp)) {
+        Remove-Item -Path $legacyApp -Force -ErrorAction SilentlyContinue
+        Log-Info "Removed legacy binary $legacyApp"
+    }
+}
+
 Log-Step "Installation configuration:"
 Log-Config "Service name: $ServiceName"
 Log-Config "Install directory: $InstallDir"
@@ -195,6 +277,7 @@ function Uninstall-Previous {
         Remove-Item $AgentPath -Force
     }
 }
+Invoke-LegacyCleanup -NewArgs $KomariArgs
 Uninstall-Previous
 
 function Get-LatestCustomVersion {
