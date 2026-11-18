@@ -1,5 +1,40 @@
 # 安装与部署
 
+> **本 fork 的安装脚本默认从 `LHDyx/komari-agent` 的 Release 下载**，并会校验发布产物附带的
+> `.sha256`。面板自带的“一键部署”按钮仍指向官方脚本，要安装本 fork 请使用下面第一节的命令。
+
+## 零、从本 fork 安装（对应面板一键部署）
+
+把面板生成命令里的脚本地址换成我们的仓库即可；参数保持面板生成的内容不变：
+
+```bash
+# Linux（root / sudo）
+wget -qO- https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/install.sh \
+  | sudo bash -s -- -e https://你的面板 -t TOKEN
+
+# macOS
+zsh <(curl -sL https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/install.sh) \
+  -e https://你的面板 -t TOKEN
+
+# Windows（管理员 PowerShell）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+  "iwr 'https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/install.ps1' -UseBasicParsing -OutFile '.\install.ps1'; & '.\install.ps1' -e https://你的面板 -t TOKEN"
+```
+
+自动发现同理，把面板生成的 `-t TOKEN` 换成 `--auto-discovery KEY`。
+
+脚本行为（与官方一致的部分不再赘述）：
+
+| 行为 | 说明 |
+| --- | --- |
+| 版本解析 | 自动选择最新的 `<x.y.z>-custom.<i>` 正式构建，忽略预览版和 Snapshot |
+| 指定版本 | `--install-version 1.5.11-custom.1`（也接受预览版 tag） |
+| 校验 | 下载后校验 `.sha256`，不匹配立即中止；`--install-no-verify` 可关闭 |
+| 预演 | `--install-dry-run` 只打印解析出的版本与 URL，不下载、不安装 |
+| 换仓库 | `--install-repo owner/name`；指向官方仓库时自动回退到 `releases/latest` |
+
+> 面板的 **Docker 一键部署**仍使用官方镜像；本 fork 暂未发布 `ghcr.io` 镜像。
+
 ## 一、Linux / macOS / FreeBSD：`install.sh`
 
 ### 1. 参数

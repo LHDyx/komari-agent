@@ -45,6 +45,9 @@ github_proxy=""
 install_version="" # New parameter for specifying version
 install_dir_specified=false
 install_no_mirror=false # 关闭自动加速镜像
+agent_repo="${KOMARI_AGENT_REPO:-LHDyx/komari-agent}" # 二进制与安装脚本来源仓库（owner/name）
+install_verify=true    # 校验发布产物附带的 .sha256
+install_dry_run=false  # 只解析版本与 URL，不下载、不安装
 service_user="${SUDO_USER:-$(id -un)}"
 user_service=false
 
@@ -100,6 +103,18 @@ while [ $# -gt 0 ]; do
             ;;
         --install-no-mirror) # 新增: 关闭自动加速镜像
             install_no_mirror=true
+            shift
+            ;;
+        --install-repo) # 二进制来源仓库，默认 LHDyx/komari-agent
+            agent_repo="$2"
+            shift 2
+            ;;
+        --install-no-verify)
+            install_verify=false
+            shift
+            ;;
+        --install-dry-run)
+            install_dry_run=true
             shift
             ;;
         --install*)
@@ -322,7 +337,7 @@ log_info "Detected OS: ${GREEN}$os_name${NC}, Architecture: ${GREEN}$arch${NC}"
 file_name="komari-agent-${os_name}-${arch}"
 
 resolve_snapshot_version() {
-    snapshot_api_url="https://api.github.com/repos/komari-monitor/komari-agent/releases?per_page=100"
+    snapshot_api_url="https://api.github.com/repos/${agent_repo}/releases?per_page=100"
     if [ -n "$github_proxy" ]; then
         snapshot_api_urls="${github_proxy}/${snapshot_api_url} ${snapshot_api_url}"
     else
@@ -356,7 +371,68 @@ resolve_snapshot_version() {
     return 1
 }
 
-version_to_install="latest"
+resolve_custom_version() {
+    # 从 Releases 列表里挑选最新的正式构建 tag：<x.y.z>-custom.<i>
+    # 预览版（-custom-pre.<i>）、Snapshot 和其它格式都不会被选中。
+    custom_api_url="https://api.github.com/repos/${agent_repo}/releases?per_page=100"
+    if [ -n "$github_proxy" ]; then
+        custom_api_urls="${github_proxy}/${custom_api_url} ${custom_api_url}"
+    else
+        custom_api_urls="$custom_api_url"
+    fi
+
+    for api_url in $custom_api_urls; do
+        if ! releases_json=$(curl -fsSL --connect-timeout 15 \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: komari-agent-installer" \
+            "$api_url"); then
+            releases_json=""
+        fi
+
+        if [ -n "$releases_json" ]; then
+            tags=$(printf '%s\n' "$releases_json" |
+                grep -o '"tag_name":[[:space:]]*"[^"]*"' |
+                sed 's/.*"\([^"]*\)".*/\1/' |
+                grep -E '^[0-9]+\.[0-9]+\.[0-9]+-custom\.[0-9]{1,8}$')
+            if [ -n "$tags" ]; then
+                RESOLVED_CUSTOM_VERSION=$(printf '%s\n' "$tags" |
+                    (sort -V 2>/dev/null || sort) | tail -n 1)
+                return 0
+            fi
+        fi
+
+        if [ "$api_url" != "$custom_api_url" ]; then
+            log_warning "Failed to resolve releases through GitHub proxy, retrying directly."
+        fi
+    done
+
+    # 回退：仓库没有 <x.y.z>-custom.<i> 形式时，使用 GitHub 的 latest release
+    # （例如 --install-repo komari-monitor/komari-agent 安装官方版本）。
+    latest_api_url="https://api.github.com/repos/${agent_repo}/releases/latest"
+    if [ -n "$github_proxy" ]; then
+        latest_api_urls="${github_proxy}/${latest_api_url} ${latest_api_url}"
+    else
+        latest_api_urls="$latest_api_url"
+    fi
+    for api_url in $latest_api_urls; do
+        if latest_json=$(curl -fsSL --connect-timeout 15 \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: komari-agent-installer" \
+            "$api_url" 2>/dev/null); then
+            RESOLVED_CUSTOM_VERSION=$(printf '%s\n' "$latest_json" |
+                grep -o '"tag_name":[[:space:]]*"[^"]*"' |
+                sed 's/.*"\([^"]*\)".*/\1/' |
+                head -n 1)
+            if [ -n "$RESOLVED_CUSTOM_VERSION" ]; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+version_to_install=""
 if [ -n "$install_version" ]; then
     if [ "$install_version" = "snapshot" ]; then
         log_info "Resolving the latest snapshot version..."
@@ -371,22 +447,36 @@ if [ -n "$install_version" ]; then
         version_to_install="$install_version"
     fi
 else
-    log_info "No version specified, installing the latest version."
+    log_info "Resolving the latest release from ${agent_repo} ..."
+    if ! resolve_custom_version; then
+        log_error "No release matching <x.y.z>-custom.<i> was found in ${agent_repo}."
+        log_error "Publish a release first, or pass --install-version <tag>."
+        exit 1
+    fi
+    version_to_install="$RESOLVED_CUSTOM_VERSION"
+    log_success "Latest release: ${GREEN}$version_to_install${NC}"
 fi
 
 # Construct download URL
-if [ "$version_to_install" = "latest" ]; then
-    download_path="latest/download"
-else
-    download_path="download/${version_to_install}"
-fi
-
+download_path="download/${version_to_install}"
 if [ -n "$github_proxy" ]; then
     # Use proxy for GitHub releases
-    download_url="${github_proxy}/https://github.com/komari-monitor/komari-agent/releases/${download_path}/${file_name}"
+    download_url="${github_proxy}/https://github.com/${agent_repo}/releases/${download_path}/${file_name}"
 else
     # Direct access to GitHub releases
-    download_url="https://github.com/komari-monitor/komari-agent/releases/${download_path}/${file_name}"
+    download_url="https://github.com/${agent_repo}/releases/${download_path}/${file_name}"
+fi
+
+if [ "$install_dry_run" = "true" ]; then
+    log_config "Dry run - nothing will be installed:"
+    log_config "  Repository: ${agent_repo}"
+    log_config "  Version:    ${version_to_install}"
+    log_config "  OS/Arch:    ${os_name}/${arch}"
+    log_config "  Asset:      ${file_name}"
+    log_config "  URL:        ${download_url}"
+    log_config "  Install dir: ${target_dir}"
+    log_config "  Service:    ${service_name}"
+    exit 0
 fi
 
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
@@ -423,6 +513,51 @@ if [ -z "$dl_ok" ]; then
     log_error "Download failed from all sources (direct + mirrors)"
     log_error "Retry later, or specify --install-ghproxy <mirror-prefix> manually"
     exit 1
+fi
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v sha256 >/dev/null 2>&1; then
+        sha256 -q "$1"
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    else
+        return 1
+    fi
+}
+
+if [ "$install_verify" = "true" ]; then
+    log_step "Verifying SHA-256 checksum..."
+    sha_file="$(dirname "$komari_agent_path")/.komari-agent.sha256"
+    sha_ok=""
+    for u in $download_urls; do
+        if curl -fL --connect-timeout 15 -o "$sha_file" "${u}.sha256" 2>/dev/null && [ -s "$sha_file" ]; then
+            sha_ok=1
+            break
+        fi
+        rm -f "$sha_file"
+    done
+    if [ -n "$sha_ok" ]; then
+        expected="$(awk '{print $1; exit}' "$sha_file" | tr 'A-F' 'a-f')"
+        actual="$(sha256_of "$komari_agent_path" | tr 'A-F' 'a-f')"
+        if [ -z "$actual" ]; then
+            log_warning "No SHA-256 tool found; checksum verification skipped."
+        elif [ "$expected" != "$actual" ]; then
+            rm -f "$komari_agent_path" "$sha_file"
+            log_error "Checksum mismatch for ${file_name}: got ${actual}, want ${expected}"
+            exit 1
+        else
+            log_success "Checksum OK"
+        fi
+    else
+        log_warning "Checksum file not available; verification skipped (use --install-no-verify to silence)."
+    fi
+    rm -f "$sha_file"
+else
+    log_warning "Checksum verification disabled by --install-no-verify"
 fi
 
 # Set executable permissions
