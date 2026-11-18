@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/LHDyx/komari-agent/main/install.sh 
 
 # 安装相关参数（--install-*）
 --install-dir <目录>          安装目录
---install-service-name <名>   服务名，默认 komari-agent
+--install-service-name <名>   服务名，默认 kmr-ag
 --install-ghproxy <前缀>      GitHub 代理前缀
 --install-version <版本>      指定版本，或 snapshot
 --install-no-mirror           关闭自动镜像回退
@@ -55,14 +55,23 @@ curl -fsSL https://raw.githubusercontent.com/LHDyx/komari-agent/main/install.sh 
 
 | 身份 / 系统 | 安装目录 | 服务 |
 | --- | --- | --- |
-| root + Linux | `/opt/komari` | systemd 系统服务 |
-| 普通用户 + Linux | `${XDG_DATA_HOME:-~/.local/share}/komari` | systemd 用户服务 |
-| macOS + root | `/usr/local/komari` | LaunchDaemon |
-| macOS + 用户 | `~/.komari`（`/usr/local` 不可写时） | LaunchAgent |
-| FreeBSD | `/opt/komari` | OpenRC / rc |
-| Windows (MSYS) | `/c/komari` | 脚本不注册服务 |
+| root + Linux | `/opt/kmr/lh` | systemd 系统服务（`kmr-ag.service`） |
+| 普通用户 + Linux | `${XDG_DATA_HOME:-~/.local/share}/kmr/lh` | systemd 用户服务（`kmr-ag.service`） |
+| macOS + root | `/opt/kmr/lh` | LaunchDaemon（`com.komari.kmr-ag.plist`） |
+| macOS + 用户 | `~/.kmr/lh`（`/opt/kmr/lh` 不可写时） | LaunchAgent |
+| FreeBSD | `/opt/kmr/lh`（非 root 用 XDG 路径） | OpenRC / rc（`/etc/init.d/kmr-ag`） |
+| Windows (MSYS) | `C:\kmr\lh` | 脚本不注册服务 |
+| Windows（`install.ps1`） | `C:\kmr\lh` | `kmr-ag`（nssm，本地名 `sm.exe`） |
 
 服务运行账号默认是 `SUDO_USER`（sudo 前的用户），不是 root。
+
+> **从旧默认迁移**：旧版本使用服务名 `komari-agent`、目录 `/opt/komari`、二进制 `agent`。
+> 新脚本只按新名字清理，不会自动移除旧服务；升级前请先停用并删除旧服务/二进制，
+> 否则会同时存在两套。
+
+**磁盘上的二进制名**：Linux / macOS / FreeBSD 为 `<安装目录>/lh_kmr_ag`；Windows 为
+`C:\kmr\lh\lh_kmr_ag.exe`。下载的 Release 资产名仍是 `komari-agent-<os>-<arch>`（Windows 带 `.exe`），
+安装时重命名。
 
 ### 3. 执行步骤
 
@@ -101,8 +110,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/komari/agent -e https://panel.example.com -t xxx
-WorkingDirectory=/opt/komari
+ExecStart=/opt/kmr/lh/lh_kmr_ag -e https://panel.example.com -t xxx
+WorkingDirectory=/opt/kmr/lh
 Restart=always
 User=www-data
 
@@ -113,18 +122,20 @@ WantedBy=multi-user.target
 ## 二、Windows：`install.ps1`
 
 1. 默认安装目录 `C:\Program Files\Komari`（可用 `--install-dir` 覆盖）
-2. 准备 **nssm**：PATH 中可用则直接使用，否则下载到安装目录
-3. 停止并移除旧服务（`nssm remove ... confirm`，失败回退 `sc.exe delete`），删除旧二进制
+2. 准备服务管理器：优先复用 PATH 中的 nssm，否则下载 nssm，统一保存为
+   `C:\kmr\lh\sm.exe`，之后所有操作都用它执行
+3. 停止并移除旧服务（`sm remove kmr-ag confirm`，失败回退 `sc.exe delete`），删除旧二进制
+   `C:\kmr\lh\lh_kmr_ag.exe`
 4. 解析版本（`latest` / 指定 / `snapshot`）并下载 `komari-agent-windows-<arch>.exe`
-5. 用 nssm 注册并启动服务：
+5. 用 `sm.exe` 注册并启动服务：
 
 ```powershell
-nssm install komari-agent C:\Program Files\Komari\komari-agent.exe "-e ... -t ..."
-nssm set komari-agent DisplayName "Komari Agent Service"
-nssm set komari-agent Start SERVICE_AUTO_START
-nssm set komari-agent AppExit Default Restart
-nssm set komari-agent AppRestartDelay 5000
-nssm start komari-agent
+& C:\kmr\lh\sm.exe install kmr-ag C:\kmr\lh\lh_kmr_ag.exe "-e ... -t ..."
+& C:\kmr\lh\sm.exe set kmr-ag DisplayName "Komari Agent Service"
+& C:\kmr\lh\sm.exe set kmr-ag Start SERVICE_AUTO_START
+& C:\kmr\lh\sm.exe set kmr-ag AppExit Default Restart
+& C:\kmr\lh\sm.exe set kmr-ag AppRestartDelay 5000
+& C:\kmr\lh\sm.exe start kmr-ag
 ```
 
 6. 服务启动后，agent 会向每个交互式登录会话弹出安全通知（见
