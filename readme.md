@@ -30,7 +30,7 @@ export AGENT_TOKEN="your-token"
 {
   "endpoint": "https://example.com",
   "token": "your-token",
-  "interval": 3,
+  "interval": 10,
   "disable_auto_update": false,
   "disable_web_ssh": false,
   "ignore_unsafe_cert": false

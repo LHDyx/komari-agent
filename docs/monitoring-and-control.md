@@ -28,7 +28,7 @@ ipv4, ipv6, mem_total, swap_total, disk_total, gpu_name, virtualization, version
 `monitoring/unit/virtualization.go`：优先 `systemd-detect-virt`，其次容器特征探测，
 最后用 CPUID hypervisor 位 + 厂商映射；裸机返回 `none`。
 
-## 二、实时指标（默认每 3 秒）
+## 二、实时指标（默认每 10 秒）
 
 汇总在 `monitoring/monitoring.go`，结构：
 
