@@ -229,9 +229,6 @@ uninstall_previous() {
     fi
 }
 
-# Uninstall previous installation
-uninstall_previous
-
 install_dependencies() {
     log_step "Checking and installing dependencies..."
 
@@ -478,6 +475,9 @@ if [ "$install_dry_run" = "true" ]; then
     log_config "  Service:    ${service_name}"
     exit 0
 fi
+
+# Uninstall previous installation (after dry-run, so --install-dry-run has no side effects)
+uninstall_previous
 
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
