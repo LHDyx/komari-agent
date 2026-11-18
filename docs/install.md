@@ -35,6 +35,47 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
 
 > 面板的 **Docker 一键部署**仍使用官方镜像；本 fork 暂未发布 `ghcr.io` 镜像。
 
+## 零之二、导入官方安装命令
+
+如果手上只有面板生成的官方一键命令（Linux/macOS 的 `wget ... | bash -s -- ...`、
+Windows 的 `powershell ... -Command "iwr ...; & '.\install.ps1' ..."`），可以用导入脚本
+自动提取参数，再安装本 fork：
+
+```bash
+# Linux / macOS：先下载再运行（不要用 curl | bash，避免占用 stdin）
+curl -fsSL -o /tmp/import-command.sh \
+  https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/import-command.sh
+sudo bash /tmp/import-command.sh
+# 按提示粘贴官方命令，回车
+```
+
+也可以直接传入或从管道读取：
+
+```bash
+sudo bash /tmp/import-command.sh '<官方命令>'
+cat official-command.txt | sudo bash /tmp/import-command.sh
+sudo bash /tmp/import-command.sh --dry-run '<官方命令>'   # 只解析不安装
+```
+
+Windows：
+
+```powershell
+iwr 'https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/import-command.ps1' -UseBasicParsing -OutFile import-command.ps1
+.\import-command.ps1            # 粘贴官方命令
+.\import-command.ps1 -AgentCommand '<官方命令>' -DryRun
+```
+
+> 导入脚本需要 bash（Linux/macOS）或 PowerShell 5.1+（Windows）。
+
+行为：
+
+- 只提取白名单内的 agent / 安装参数（`-e -t -i --month-rotate --install-*` 等），
+  忽略脚本 URL、`sudo`、`powershell -Command`、`iwr/-UseBasicParsing` 等噪声
+- 校验必须解析出端点，以及 token 或自动发现 key，否则退出
+- 输出中 token/key 会打码；默认需要确认，`--yes` 可跳过
+- `--dry-run` 只打印解析结果
+- 解析完成后调用本仓库的 `install.sh` / `install.ps1`，后续就是正常的安装流程
+
 ## 一、Linux / macOS / FreeBSD：`install.sh`
 
 ### 1. 参数

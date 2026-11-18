@@ -7,7 +7,7 @@
 | --- | --- |
 | [overview.md](overview.md) | 项目定位、代码结构、启动流程、配置优先级、连接与自更新 |
 | [monitoring-and-control.md](monitoring-and-control.md) | 上报的指标、协议方法、远程命令/终端/文件传输 |
-| [install.md](install.md) | `install.sh` / `install.ps1` 逐段行为、各平台服务管理、Docker |
+| [install.md](install.md) | `install.sh` / `install.ps1` 逐段行为、各平台服务管理、Docker、官方命令导入 |
 | [windows-notification.md](windows-notification.md) | **Windows 安装后弹通知的完整行为**（触发条件、实现、时序、限制） |
 | [../CUSTOM-BUILD.md](../CUSTOM-BUILD.md) | 本 fork 的构建、版本号、预览/正式发布与自动更新约定 |
 | [../CLAUDE.md](../CLAUDE.md) | 项目当前状态与红线（给 coding agent 用） |
