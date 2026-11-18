@@ -198,6 +198,19 @@ jobs:
             gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
           done
 
+          # 发布正式版时清理所有预览版：预览只供人工使用，正式版发布后即被取代。
+          # （自动更新通道本来就不选 -custom-pre.*，这里只是保持列表干净。）
+          if [ "${PRERELEASE}" != "true" ]; then
+            mapfile -t PREVIEWS < <(gh release list --repo "${REPO}" --limit 200 \
+              --json tagName --jq '.[].tagName' \
+              | { grep -E -- '-custom-pre\.[0-9]+$' || true; })
+            for tag in "${PREVIEWS[@]:-}"; do
+              [ -n "${tag}" ] || continue
+              echo "Deleting preview release ${tag} (superseded by ${RELTAG})..."
+              gh release delete "${tag}" --repo "${REPO}" --cleanup-tag --yes || true
+            done
+          fi
+
           # 预览版标 prerelease；正式版不标。
           FLAGS=(--repo "${REPO}" --target "${GITHUB_SHA}" --title "Custom Build (${VERSION})" --notes "${NOTES}" --latest=false)
           if [ "${PRERELEASE}" = "true" ]; then

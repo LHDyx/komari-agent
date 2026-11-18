@@ -32,7 +32,9 @@
 - 上游继承来的 `Build on Main`、`Publish Snapshot` 也已改为仅手动触发，避免每次推送跑 40+ 个任务；
 - 平台组合与官方 `build_all.sh` 完全一致（windows/linux/darwin/freebsd × amd64/arm64/386/arm，
   排除 windows/arm、darwin/386、darwin/arm，外加 linux/loong64，共 15 个）；
-- 产物同时作为 Artifact 上传，并发布为 Release；发布时会清理不符合当前命名方案的旧 Release。
+- 产物同时作为 Artifact 上传，并发布为 Release；
+- **发布正式版时，会删除所有 `<基础版本>-custom-pre.<i>` 预览版及其 tag**（预览只供人工使用，正式版发布后即被取代）；
+- 同时清理不符合当前命名方案的旧 Release。
 
 ## 版本号规则
 
