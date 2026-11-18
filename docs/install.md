@@ -65,9 +65,23 @@ curl -fsSL https://raw.githubusercontent.com/LHDyx/komari-agent/main/install.sh 
 
 服务运行账号默认是 `SUDO_USER`（sudo 前的用户），不是 root。
 
-> **从旧默认迁移**：旧版本使用服务名 `komari-agent`、目录 `/opt/komari`、二进制 `agent`。
-> 新脚本只按新名字清理，不会自动移除旧服务；升级前请先停用并删除旧服务/二进制，
-> 否则会同时存在两套。
+### 自动清理旧版本安装
+
+脚本会在安装前检查旧默认安装（服务名 `komari-agent`、目录 `/opt/komari`、二进制 `agent`；
+Windows 为 `komari-agent` 服务与 `C:\Program Files\Komari\komari-agent.exe`）。
+
+**只有在“端点 + 身份”一致时才会删除**，避免误删同机上反馈给其他主控的 agent：
+
+| 情况 | 行为 |
+| --- | --- |
+| 端点一致，token（或自动发现 key）也一致 | 停止并删除旧服务与旧二进制 |
+| 端点一致，但 token/key 不同 | 保留，并警告“reports to …; leaving it untouched” |
+| 端点不同 | 保留 |
+| 无法从旧服务定义中解析出端点或身份（如用 `--config`） | 保留，并提示手动处理 |
+
+- `--install-keep-legacy` 可完全关闭自动清理
+- Linux 会检查 systemd（系统/用户）、OpenRC、procd、Upstart、launchd
+- Windows 从 nssm 的服务注册表参数（`AppParameters`/`Application`/`AppEnvironmentExtra`）读取旧身份
 
 **磁盘上的二进制名**：Linux / macOS / FreeBSD 为 `<安装目录>/lh_kmr_ag`；Windows 为
 `C:\kmr\lh\lh_kmr_ag.exe`。下载的 Release 资产名仍是 `komari-agent-<os>-<arch>`（Windows 带 `.exe`），

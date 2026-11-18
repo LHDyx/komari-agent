@@ -48,6 +48,7 @@ install_no_mirror=false # 关闭自动加速镜像
 agent_repo="${KOMARI_AGENT_REPO:-LHDyx/komari-agent}" # 二进制与安装脚本来源仓库（owner/name）
 install_verify=true    # 校验发布产物附带的 .sha256
 install_dry_run=false  # 只解析版本与 URL，不下载、不安装
+install_keep_legacy=false # 不自动清理旧版本安装
 service_user="${SUDO_USER:-$(id -un)}"
 user_service=false
 
@@ -115,6 +116,10 @@ while [ $# -gt 0 ]; do
             ;;
         --install-dry-run)
             install_dry_run=true
+            shift
+            ;;
+        --install-keep-legacy)
+            install_keep_legacy=true
             shift
             ;;
         --install*)
@@ -231,6 +236,170 @@ uninstall_previous() {
         rm -f "$komari_agent_path"
     fi
 }
+
+
+# >>> legacy-cleanup
+# 旧版本默认安装（服务名 komari-agent、目录 /opt/komari 等）。
+# 只有在“端点 + 身份（token 或自动发现 key）一致”时才自动清理，
+# 避免误删同机上反馈给其它主控的 agent。
+
+parse_identity() {
+    _text="$1"
+    ID_ENDPOINT="$(printf '%s\n' "$_text" | sed -nE 's/.*(--endpoint|-e)[= ]"?([^"[:space:]]+)"?.*/\2/p' | head -n 1)"
+    ID_TOKEN="$(printf '%s\n' "$_text" | sed -nE 's/.*(--token|-t)[= ]"?([^"[:space:]]+)"?.*/\2/p' | head -n 1)"
+    ID_AUTODISC="$(printf '%s\n' "$_text" | sed -nE 's/.*--auto-discovery[= ]"?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$ID_ENDPOINT" ] || ID_ENDPOINT="$(printf '%s\n' "$_text" | sed -nE 's/.*AGENT_ENDPOINT="?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$ID_TOKEN" ] || ID_TOKEN="$(printf '%s\n' "$_text" | sed -nE 's/.*AGENT_TOKEN="?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$ID_AUTODISC" ] || ID_AUTODISC="$(printf '%s\n' "$_text" | sed -nE 's/.*AGENT_AUTO_DISCOVERY_KEY="?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+}
+
+# 输出 match / mismatch / unknown
+legacy_identity_verdict() {
+    if [ -z "$NEW_ENDPOINT" ] || [ -z "$ID_ENDPOINT" ]; then
+        echo unknown
+        return 0
+    fi
+    _a="${NEW_ENDPOINT%/}"
+    _b="${ID_ENDPOINT%/}"
+    if [ "$_a" != "$_b" ]; then
+        echo mismatch
+        return 0
+    fi
+    if [ -n "$NEW_TOKEN" ] && [ -n "$ID_TOKEN" ]; then
+        if [ "$NEW_TOKEN" = "$ID_TOKEN" ]; then echo match; else echo mismatch; fi
+        return 0
+    fi
+    if [ -n "$NEW_AUTODISC" ] && [ -n "$ID_AUTODISC" ]; then
+        if [ "$NEW_AUTODISC" = "$ID_AUTODISC" ]; then echo match; else echo mismatch; fi
+        return 0
+    fi
+    # 端点一致但无法比对 token / 自动发现 key：保守处理，不删除
+    echo unknown
+}
+
+legacy_binary_path() {
+    _t="$1"
+    _bin="$(printf '%s\n' "$_t" | sed -nE 's/^[[:space:]]*ExecStart=-?"?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$_bin" ] || _bin="$(printf '%s\n' "$_t" | sed -nE 's/^[[:space:]]*command="?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$_bin" ] || _bin="$(printf '%s\n' "$_t" | sed -nE 's/^[[:space:]]*PROG="?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$_bin" ] || _bin="$(printf '%s\n' "$_t" | sed -nE 's/^[[:space:]]*exec[[:space:]]+"?([^"[:space:]]+)"?.*/\1/p' | head -n 1)"
+    [ -n "$_bin" ] || _bin="$(printf '%s\n' "$_t" | grep -A6 'ProgramArguments' 2>/dev/null | sed -nE 's/.*<string>([^<]+)<\/string>.*/\1/p' | head -n 1)"
+    printf '%s' "$_bin"
+}
+
+cleanup_legacy_unit() {
+    _desc="$1"
+    _action="$2"
+    _unit="$3"
+    [ -f "$_unit" ] || return 0
+
+    case "$_action" in
+        systemd-system|openrc|procd|upstart|launchd-system)
+            if [ "$EUID" -ne 0 ]; then
+                log_warning "Found legacy agent ($_desc) but not running as root; leaving it untouched."
+                return 0
+            fi
+            ;;
+    esac
+
+    _content="$(cat "$_unit" 2>/dev/null)"
+    parse_identity "$_content"
+    _verdict="$(legacy_identity_verdict)"
+    case "$_verdict" in
+        match)
+            ;;
+        mismatch)
+            log_warning "Legacy agent found ($_desc) but it reports to ${ID_ENDPOINT:-another panel}; leaving it untouched."
+            return 0
+            ;;
+        *)
+            log_warning "Legacy agent found ($_desc) but its endpoint/token cannot be verified; leaving it untouched."
+            log_info "If it is the old Komari Agent, remove it manually with --install-keep-legacy once handled."
+            return 0
+            ;;
+    esac
+
+    _bin="$(legacy_binary_path "$_content")"
+    log_info "Removing legacy agent ($_desc, ${ID_ENDPOINT})..."
+    case "$_action" in
+        systemd-system)
+            systemctl stop komari-agent.service 2>/dev/null || true
+            systemctl disable komari-agent.service 2>/dev/null || true
+            rm -f "$_unit"
+            systemctl daemon-reload 2>/dev/null || true
+            ;;
+        systemd-user)
+            systemctl --user stop komari-agent.service 2>/dev/null || true
+            systemctl --user disable komari-agent.service 2>/dev/null || true
+            rm -f "$_unit"
+            systemctl --user daemon-reload 2>/dev/null || true
+            ;;
+        openrc)
+            rc-service komari-agent stop 2>/dev/null || true
+            rc-update del komari-agent default 2>/dev/null || true
+            rm -f "$_unit"
+            ;;
+        procd)
+            "$_unit" stop 2>/dev/null || true
+            "$_unit" disable 2>/dev/null || true
+            rm -f "$_unit"
+            ;;
+        upstart)
+            initctl stop komari-agent 2>/dev/null || true
+            rm -f "$_unit"
+            ;;
+        launchd-system)
+            launchctl bootout system "$_unit" 2>/dev/null || true
+            rm -f "$_unit"
+            ;;
+        launchd-user)
+            launchctl bootout "gui/$(id -u)" "$_unit" 2>/dev/null || true
+            rm -f "$_unit"
+            ;;
+    esac
+
+    if [ -n "$_bin" ] && [ "$_bin" != "$komari_agent_path" ]; then
+        case "$_bin" in
+            /*|/c/*)
+                if [ -f "$_bin" ]; then
+                    rm -f "$_bin" && log_info "Removed legacy binary $_bin"
+                fi
+                ;;
+        esac
+    fi
+}
+
+cleanup_legacy_installation() {
+    if [ "$install_keep_legacy" = "true" ]; then
+        log_info "Keeping legacy installations (--install-keep-legacy)."
+        return 0
+    fi
+
+    NEW_ID_TEXT="$komari_args"
+    [ -n "${AGENT_ENDPOINT:-}" ] && NEW_ID_TEXT="$NEW_ID_TEXT --endpoint $AGENT_ENDPOINT"
+    [ -n "${AGENT_TOKEN:-}" ] && NEW_ID_TEXT="$NEW_ID_TEXT --token $AGENT_TOKEN"
+    [ -n "${AGENT_AUTO_DISCOVERY_KEY:-}" ] && NEW_ID_TEXT="$NEW_ID_TEXT --auto-discovery $AGENT_AUTO_DISCOVERY_KEY"
+    parse_identity "$NEW_ID_TEXT"
+    NEW_ENDPOINT="$ID_ENDPOINT"
+    NEW_TOKEN="$ID_TOKEN"
+    NEW_AUTODISC="$ID_AUTODISC"
+
+    cleanup_legacy_unit "systemd system unit" systemd-system "/etc/systemd/system/komari-agent.service"
+    cleanup_legacy_unit "systemd system unit" systemd-system "/lib/systemd/system/komari-agent.service"
+    cleanup_legacy_unit "systemd system unit" systemd-system "/usr/lib/systemd/system/komari-agent.service"
+    cleanup_legacy_unit "systemd user unit" systemd-user "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/komari-agent.service"
+    if [ -f "/etc/init.d/komari-agent" ]; then
+        if grep -q 'USE_PROCD' "/etc/init.d/komari-agent" 2>/dev/null; then
+            cleanup_legacy_unit "procd service" procd "/etc/init.d/komari-agent"
+        else
+            cleanup_legacy_unit "OpenRC service" openrc "/etc/init.d/komari-agent"
+        fi
+    fi
+    cleanup_legacy_unit "Upstart job" upstart "/etc/init/komari-agent.conf"
+    cleanup_legacy_unit "launchd daemon" launchd-system "/Library/LaunchDaemons/com.komari.komari-agent.plist"
+    cleanup_legacy_unit "launchd agent" launchd-user "$HOME/Library/LaunchAgents/com.komari.komari-agent.plist"
+}
+# <<< legacy-cleanup
 
 install_dependencies() {
     log_step "Checking and installing dependencies..."
@@ -481,6 +650,9 @@ if [ "$install_dry_run" = "true" ]; then
     log_config "  Service:    ${service_name}"
     exit 0
 fi
+
+# 清理旧版本默认安装（仅在同一端点 + 身份时）
+cleanup_legacy_installation
 
 # Uninstall previous installation (after dry-run, so --install-dry-run has no side effects)
 uninstall_previous

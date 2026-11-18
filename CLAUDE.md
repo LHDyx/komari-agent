@@ -20,6 +20,8 @@
 - 所有 GitHub Actions 均已改为**仅手动触发**，推送 main 不构建；日常改动用 `./build-local.sh`。
 - 安装默认值：服务名 `kmr-ag`；目录 `/opt/kmr/lh`（Linux/macOS root）、`C:\kmr\lh`（Windows）；
   二进制 `lh_kmr_ag`（Windows `lh_kmr_ag.exe`）；Windows 服务管理器 nssm 统一保存为 `sm.exe`。
+- 安装脚本会自动清理旧默认安装（`komari-agent`），但仅当端点与 token/自动发现 key 一致；
+  `--install-keep-legacy` 可关闭。
 - 代码改动：`--update-repo` / `AGENT_UPDATE_REPO`，**默认更新源已是 LHDyx/komari-agent**；
   `--enable-security-warning`（默认 false，关闭 Linux MOTD 与 Windows Toast）；
   非官方源时打开 allowPrerelease，只接受 tag 含 `-custom.` 的自构建。
