@@ -76,7 +76,7 @@ ipv4, ipv6, mem_total, swap_total, disk_total, gpu_name, virtualization, version
 - 每 **600 秒**合并写入工作目录的 `net_static.json`
 - 只保留最近 **31 天**，过期清理
 - 启动时读文件续算；`Stop()` 时再写一次
-- 文件名固定，位置取决于服务的工作目录（安装脚本设为 `/opt/komari`）
+- 文件名固定，位置取决于服务的工作目录（安装脚本设为 `/opt/kmr/lh`）
 - 服务重启最多丢失一个保存周期（10 分钟）内的增量
 
 ## 四、协议（`protocol/v2`）

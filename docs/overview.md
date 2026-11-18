@@ -128,7 +128,7 @@ POST 回退模式下并行两件事：
 - 只跟进当前 `major.minor` 线内更高版本
 - 本 fork 的过滤规则：自建仓库下只接受 tag 形如 `<base>-custom.<i>`；预览版与官方版本都不选
 - 下载 `komari-agent-<os>-<arch>`，校验 GitHub 提供的 sha256 digest，`go-update` 原地替换
-- 成功后进程以**退出码 42** 退出；systemd `Restart=always` / nssm `AppExit Restart` 负责拉起
+- 成功后进程以**退出码 42** 退出；systemd `Restart=always` / sm.exe（nssm）`AppExit Restart` 负责拉起
 - 容器内（存在 `/.komari-agent-container`）一律跳过自更新
 - 面板“切换版本”复用同一模块（`CheckAndUpdateForVersionLine`）
 

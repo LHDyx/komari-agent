@@ -18,6 +18,8 @@
 - 本地新增：`.github/workflows/custom-build.yml`（15 平台在线交叉构建 + 预发布 Release）、
   `sync-upstream.sh`（跟进上游，已 gitignore）、`build-local.sh`（本地交叉编译）、`CUSTOM-BUILD.md`。
 - 所有 GitHub Actions 均已改为**仅手动触发**，推送 main 不构建；日常改动用 `./build-local.sh`。
+- 安装默认值：服务名 `kmr-ag`；目录 `/opt/kmr/lh`（Linux/macOS root）、`C:\kmr\lh`（Windows）；
+  二进制 `lh_kmr_ag`（Windows `lh_kmr_ag.exe`）；Windows 服务管理器 nssm 统一保存为 `sm.exe`。
 - 代码改动：`--update-repo` / `AGENT_UPDATE_REPO`，**默认更新源已是 LHDyx/komari-agent**；
   `--enable-security-warning`（默认 false，关闭 Linux MOTD 与 Windows Toast）；
   非官方源时打开 allowPrerelease，只接受 tag 含 `-custom.` 的自构建。

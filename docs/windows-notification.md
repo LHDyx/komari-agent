@@ -4,14 +4,14 @@
 > 注入一个辅助进程弹出 Windows Toast。
 >
 > **本 fork 默认关闭该提示**（上游默认开启）：需要显式加 `--enable-security-warning`
-> 才会弹出。安装完成（`nssm start`）后，通常在 **3 秒内**当前已登录的桌面就会看到提示。
+> 才会弹出。安装完成（服务管理器启动 `kmr-ag`）后，通常在 **3 秒内**当前已登录的桌面就会看到提示。
 
 ## 一、触发条件
 
 | 条件 | 说明 |
 | --- | --- |
 | 平台 | 仅 Windows（`//go:build windows`） |
-| 服务已启动 | `install.ps1` 最后执行 `nssm start komari-agent` |
+| 服务已启动 | `install.ps1` 最后用 `sm.exe` 启动 `kmr-ag` |
 | 已启用 `--enable-security-warning` | **本 fork 默认 false**，不开启则 `startSecurityWarning` 直接返回 |
 | 未启用 `--disable-web-ssh` | 启用时即使打开提示开关也不显示 |
 | 存在交互式会话 | 会话状态必须是 `WTSActive` 且能取到用户名 |
@@ -30,7 +30,7 @@
 ## 三、完整时序
 
 ```
-nssm start komari-agent
+& C:\kmr\lh\sm.exe start kmr-ag
   └─ agent 服务进程（LocalSystem）
       └─ startSecurityWarning()
           ├─ !securityWarningEnabled() ? → 直接返回，不通知
@@ -76,7 +76,7 @@ Uninstall Komari Agent: https://komari-document.pages.dev/en/faq/uninstall
 ```
 
 - `<面板主机>`：从 `--endpoint` 解析出的 host（含端口，IDN 转 ASCII）
-- `<运行账号>`：服务进程所在账号；nssm 默认是 **LocalSystem**，所以通常显示 `SYSTEM`
+- `<运行账号>`：服务进程所在账号；服务管理器（nssm/sm.exe）默认是 **LocalSystem**，所以通常显示 `SYSTEM`
   （这如实反映了“远程命令以 SYSTEM 身份执行”）
 - 动作按钮/点击链接：卸载说明页
 
@@ -86,14 +86,14 @@ Uninstall Komari Agent: https://komari-document.pages.dev/en/faq/uninstall
 
 - 服务启动时，**当前所有活跃会话各弹一次**（前提是已开启提示）
 - 用户注销后重新登录 → 视为新会话 → 再弹一次
-- **服务重启/升级后会重新弹**（`seen` 重置）；自更新完成会以退出码 42 退出并由 nssm 拉起，
+- **服务重启/升级后会重新弹**（`seen` 重置）；自更新完成会以退出码 42 退出并由 sm.exe（nssm）拉起，
   因此每次自动更新后也会再看到一次通知
 - 同一会话在服务生命周期内只弹一次
 - 会话消失会从集合中清理，避免内存膨胀
 
 ## 六、失败时的表现
 
-日志关键字（服务日志，nssm 默认在安装目录或 Windows 事件日志）：
+日志关键字（服务日志，sm.exe（nssm）默认在安装目录或 Windows 事件日志）：
 
 | 日志 | 原因 |
 | --- | --- |

@@ -39,8 +39,8 @@ log_config() {
 EUID=${EUID:-$(id -u)}
 
 # Default values
-service_name="komari-agent"
-target_dir="/opt/komari"
+service_name="kmr-ag"
+target_dir="/opt/kmr/lh"
 github_proxy=""
 install_version="" # New parameter for specifying version
 install_dir_specified=false
@@ -56,11 +56,11 @@ os_type=$(uname -s)
 case $os_type in
     Darwin)
         os_name="darwin"
-        target_dir="/usr/local/komari"  # Use /usr/local on macOS
-        # Check if we can write to /usr/local, fallback to user directory
-        if [ ! -w "/usr/local" ] && [ "$EUID" -ne 0 ]; then
-            target_dir="$HOME/.komari"
-            log_info "No write permission to /usr/local, using user directory: $target_dir"
+        target_dir="/opt/kmr/lh"
+        # 非 root 且 /opt/kmr/lh 不可写时，退到用户目录
+        if [ ! -w "/opt/kmr/lh" ] && [ "$EUID" -ne 0 ]; then
+            target_dir="$HOME/.kmr/lh"
+            log_info "No write permission to /opt/kmr/lh, using user directory: $target_dir"
         fi
         ;;
     Linux)
@@ -71,7 +71,7 @@ case $os_type in
         ;;
     MINGW*|MSYS*|CYGWIN*)
         os_name="windows"
-        target_dir="/c/komari"  # Use C:\komari on Windows
+        target_dir="/c/kmr/lh"  # Use C:\kmr\lh on Windows
         ;;
     *)
         log_error "Unsupported operating system: $os_type"
@@ -136,12 +136,15 @@ komari_args="${komari_args# }"
 if [ "$EUID" -ne 0 ] && [ "$install_dir_specified" = false ]; then
     case "$os_name" in
         linux|freebsd)
-            target_dir="${XDG_DATA_HOME:-$HOME/.local/share}/komari"
+            target_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kmr/lh"
             ;;
     esac
 fi
 
-komari_agent_path="${target_dir}/agent"
+komari_agent_path="${target_dir}/lh_kmr_ag"
+if [ "$os_name" = "windows" ]; then
+    komari_agent_path="${komari_agent_path}.exe"
+fi
 
 # User services are the only service type a non-root Linux installation can manage.
 if [ "$EUID" -ne 0 ] && [ "$os_name" = "linux" ]; then
@@ -332,6 +335,9 @@ esac
 log_info "Detected OS: ${GREEN}$os_name${NC}, Architecture: ${GREEN}$arch${NC}"
 
 file_name="komari-agent-${os_name}-${arch}"
+if [ "$os_name" = "windows" ]; then
+    file_name="${file_name}.exe"
+fi
 
 resolve_snapshot_version() {
     snapshot_api_url="https://api.github.com/repos/${agent_repo}/releases?per_page=100"
