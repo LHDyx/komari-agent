@@ -33,7 +33,8 @@
 - 平台组合与官方 `build_all.sh` 完全一致（windows/linux/darwin/freebsd × amd64/arm64/386/arm，
   排除 windows/arm、darwin/386、darwin/arm，外加 linux/loong64，共 15 个）；
 - 产物同时作为 Artifact 上传，并发布为 Release；
-- **发布正式版时，会删除所有 `<基础版本>-custom-pre.<i>` 预览版及其 tag**（预览只供人工使用，正式版发布后即被取代）；
+- **只在官方基础版本换代时清理旧预览版**：例如基础版本变为 `1.5.12` 后，删除所有 `1.5.11-custom-pre.*`；
+  同一基础版本内的预览版保留（GitHub 发布页按时间排序，便于回看）；
 - 同时清理不符合当前命名方案的旧 Release。
 
 ## 版本号规则
