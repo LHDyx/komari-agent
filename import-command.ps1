@@ -85,7 +85,7 @@ $boolFlags = @(
     '--disable-auto-update', '--disable-web-ssh', '--ignore-unsafe-cert', '-u',
     '--gpu', '--memory-include-cache', '--memory-exclude-bcf', '--get-ip-addr-from-nic',
     '--disable-compression', '--enable-security-warning', '--install-no-mirror',
-    '--install-no-verify', '--install-keep-legacy'
+    '--install-no-verify', '--install-keep-legacy', '--install-no-hide', '--install-no-sc-fallback', '--install-allow-sc-fallback'
 )
 
 $newArgs = @()

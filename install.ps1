@@ -19,7 +19,7 @@ $AgentRepo = "LHDyx/komari-agent"  # 发布产物来源仓库（owner/name）
 $VerifyChecksum = $true
 $InstallKeepLegacy = $false      # 不自动清理旧版本安装
 $NoHide = $false                 # 安装后不隐藏安装目录
-$NoScFallback = $false           # sm.exe 不可用时禁止回退 sc.exe
+$NoScFallback = $true            # 默认不回退 sc.exe；用 --install-allow-sc-fallback 开启
 
 # Parse script arguments
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -33,6 +33,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--install-keep-legacy" { $InstallKeepLegacy = $true; continue }
         "--install-no-hide" { $NoHide = $true; continue }
         "--install-no-sc-fallback" { $NoScFallback = $true; continue }
+        "--install-allow-sc-fallback" { $NoScFallback = $false; continue }
         Default { $KomariArgs += $args[$i] }
     }
 }
@@ -184,12 +185,13 @@ if (-not $SmVersionOutput) {
 
 if (-not $SmVersionOutput) {
     if ($NoScFallback) {
-        Log-Error "sm.exe cannot be executed and --install-no-sc-fallback is set."
+        Log-Error "sm.exe cannot be executed (access denied or blocked)."
         Log-Error "Run: Unblock-File $SmExe"
         Log-Error "or install nssm manually (https://nssm.cc) and put nssm.exe in PATH, then retry."
+        Log-Error "To register the service with sc.exe instead, add --install-allow-sc-fallback."
         exit 1
     }
-    Log-Warning "sm.exe cannot be executed (access denied or blocked). Falling back to sc.exe."
+    Log-Warning "sm.exe cannot be executed (access denied or blocked). Falling back to sc.exe (--install-allow-sc-fallback)."
     $UseSc = $true
 }
 else {

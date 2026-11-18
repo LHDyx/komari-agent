@@ -97,7 +97,7 @@ is_bool_flag() {
         --disable-auto-update|--disable-web-ssh|--ignore-unsafe-cert|-u|--gpu) return 0 ;;
         --memory-include-cache|--memory-exclude-bcf|--get-ip-addr-from-nic) return 0 ;;
         --disable-compression|--enable-security-warning) return 0 ;;
-        --install-no-mirror|--install-no-verify|--install-keep-legacy) return 0 ;;
+        --install-no-mirror|--install-no-verify|--install-keep-legacy|--install-no-hide|--install-no-sc-fallback|--install-allow-sc-fallback) return 0 ;;
     esac
     return 1
 }

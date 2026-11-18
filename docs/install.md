@@ -196,14 +196,15 @@ WantedBy=multi-user.target
 6. 安装完成后会把 `C:\kmr\lh` 标记为隐藏系统文件夹（`attrib +s +h`），
    `--install-no-hide` 可关闭
 7. 服务管理器优先使用 `sm.exe`（nssm）；下载文件会自动 `Unblock-File` 并清除属性，
-   仍无法执行时**自动回退到 `sc.exe`**（`New-Service` + `sc failure` 重启策略）
+   仍无法执行时**默认报错退出**（避免产生 sc 创建的服务）；
+   加 `--install-allow-sc-fallback` 才回退到 `sc.exe`（`New-Service` + `sc failure` 重启策略）
 8. 服务启动后，agent 会向每个交互式登录会话弹出安全通知（见
    [windows-notification.md](windows-notification.md)）
 
 > **关于 sc.exe 与日志**：`sc.exe` 是系统自带命令，本身不落文件；服务注册项属于任何
 > 开机自启的服务（nssm 方式同样有），卸载时删除。SCM 的系统事件日志（7036/7031 等）
-> 对所有服务统一记录，没有受支持的按服务关闭方式。若不想出现 sc 回退，加
-> `--install-no-sc-fallback`，sm.exe 不可用时直接报错退出。
+> 对所有服务统一记录，没有受支持的按服务关闭方式。默认**不会**回退 sc.exe；
+> 确实需要时显式加 `--install-allow-sc-fallback`。
 
 注意事项：
 
