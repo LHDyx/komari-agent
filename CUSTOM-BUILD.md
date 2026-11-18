@@ -83,6 +83,17 @@ komari-agent --endpoint ... --update-repo komari-monitor/komari-agent    # 切�
 - 更新是原地替换二进制，失败只能手动覆盖回滚；更新成功后进程以退出码 42 退出，靠 systemd 拉起；
 - 容器内（存在 `/.komari-agent-container`）一律跳过自升级。
 
+## 用本仓库的安装脚本
+
+`install.sh` / `install.ps1` 默认从 `LHDyx/komari-agent` 下载，并校验 `.sha256`：
+
+```bash
+wget -qO- https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/install.sh \
+  | sudo bash -s -- -e https://你的面板 -t TOKEN
+```
+
+详见 `docs/install.md`。
+
 ## 本地编译
 
 日常改动用脚本构建验证，不消耗 Actions 额度：

@@ -14,6 +14,8 @@ $ServiceName = "komari-agent"
 $GitHubProxy = ""
 $KomariArgs = @()
 $InstallVersion = ""
+$AgentRepo = "LHDyx/komari-agent"  # 发布产物来源仓库（owner/name）
+$VerifyChecksum = $true
 
 # Parse script arguments
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -22,6 +24,8 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--install-service-name" { $ServiceName = $args[$i + 1]; $i++; continue }
         "--install-ghproxy" { $GitHubProxy = $args[$i + 1]; $i++; continue }
         "--install-version" { $InstallVersion = $args[$i + 1]; $i++; continue }
+        "--install-repo" { $AgentRepo = $args[$i + 1]; $i++; continue }
+        "--install-no-verify" { $VerifyChecksum = $false; continue }
         Default { $KomariArgs += $args[$i] }
     }
 }
@@ -237,10 +241,73 @@ function Uninstall-Previous {
 }
 Uninstall-Previous
 
+function Get-LatestCustomVersion {
+    param([Parameter(Mandatory = $true)][string]$AssetName)
+
+    # 只认 <x.y.z>-custom.<i> 的正式构建；预览版 -custom-pre.<i> 不会被选中。
+    $ApiUrl = "https://api.github.com/repos/$AgentRepo/releases?per_page=100"
+    $ApiUrls = @($ApiUrl)
+    if ($GitHubProxy -ne "") {
+        $ApiUrls = @("$GitHubProxy/$ApiUrl", $ApiUrl)
+    }
+
+    for ($i = 0; $i -lt $ApiUrls.Count; $i++) {
+        try {
+            Log-Info "Fetching releases from GitHub API..."
+            $releases = Invoke-RestMethod -Uri $ApiUrls[$i] -UseBasicParsing
+        }
+        catch {
+            $releases = $null
+        }
+
+        if ($releases) {
+            $candidates = foreach ($release in $releases) {
+                if ($release.draft -or $release.prerelease) { continue }
+                $m = [regex]::Match([string]$release.tag_name, '^(\d+)\.(\d+)\.(\d+)-custom\.(\d+)$')
+                if (-not $m.Success) { continue }
+                if (@($release.assets.name) -notcontains $AssetName) { continue }
+                [pscustomobject]@{
+                    Tag   = $release.tag_name
+                    Major = [int]$m.Groups[1].Value
+                    Minor = [int]$m.Groups[2].Value
+                    Patch = [int]$m.Groups[3].Value
+                    Index = [int]$m.Groups[4].Value
+                }
+            }
+            if ($candidates) {
+                return ($candidates | Sort-Object Major, Minor, Patch, Index | Select-Object -Last 1).Tag
+            }
+        }
+
+        if ($i -lt ($ApiUrls.Count - 1)) {
+            Log-Warning "Failed to resolve releases through GitHub proxy, retrying directly."
+        }
+    }
+
+    # 回退：仓库没有 <x.y.z>-custom.<i> 形式时使用 GitHub 的 latest release
+    # （例如 --install-repo komari-monitor/komari-agent 安装官方版本）。
+    $LatestUrl = "https://api.github.com/repos/$AgentRepo/releases/latest"
+    $LatestUrls = @($LatestUrl)
+    if ($GitHubProxy -ne "") {
+        $LatestUrls = @("$GitHubProxy/$LatestUrl", $LatestUrl)
+    }
+    foreach ($url in $LatestUrls) {
+        try {
+            $latest = Invoke-RestMethod -Uri $url -UseBasicParsing
+            if ($latest.tag_name) { return [string]$latest.tag_name }
+        }
+        catch {
+            continue
+        }
+    }
+
+    throw "No release matching <x.y.z>-custom.<i> contains asset $AssetName."
+}
+
 function Get-LatestSnapshotVersion {
     param([Parameter(Mandatory = $true)][string]$AssetName)
 
-    $ApiUrl = "https://api.github.com/repos/komari-monitor/komari-agent/releases?per_page=100"
+    $ApiUrl = "https://api.github.com/repos/$AgentRepo/releases?per_page=100"
     $ApiUrls = @($ApiUrl)
     if ($GitHubProxy -ne "") {
         $ApiUrls = @("$GitHubProxy/$ApiUrl", $ApiUrl)
@@ -298,15 +365,13 @@ if ($InstallVersion -ne "") {
     }
 }
 else {
-    $ApiUrl = "https://api.github.com/repos/komari-monitor/komari-agent/releases/latest"
+    Log-Step "Resolving the latest release from $AgentRepo ..."
     try {
-        Log-Step "Fetching latest release version from GitHub API..."
-        $release = Invoke-RestMethod -Uri $ApiUrl -UseBasicParsing
-        $versionToInstall = $release.tag_name
-        Log-Success "Latest version fetched: $versionToInstall"
+        $versionToInstall = Get-LatestCustomVersion -AssetName $BinaryName
+        Log-Success "Latest release fetched: $versionToInstall"
     }
     catch {
-        Log-Error "Failed to fetch latest version: $_"
+        Log-Error "Failed to resolve the latest release: $_"
         exit 1
     }
 }
@@ -314,7 +379,7 @@ Log-Success "Installing Komari Agent version: $versionToInstall"
 
 # Construct download URL
 $BinaryName = "komari-agent-windows-$arch.exe"
-$DownloadUrl = if ($GitHubProxy) { "$GitHubProxy/https://github.com/komari-monitor/komari-agent/releases/download/$versionToInstall/$BinaryName" } else { "https://github.com/komari-monitor/komari-agent/releases/download/$versionToInstall/$BinaryName" }
+$DownloadUrl = if ($GitHubProxy) { "$GitHubProxy/https://github.com/$AgentRepo/releases/download/$versionToInstall/$BinaryName" } else { "https://github.com/$AgentRepo/releases/download/$versionToInstall/$BinaryName" }
 
 # Download and install
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -327,6 +392,31 @@ catch {
     exit 1
 }
 Log-Success "Downloaded and saved to $AgentPath"
+
+# Verify SHA-256 when the release provides it
+if ($VerifyChecksum) {
+    $ShaPath = "${AgentPath}.sha256"
+    try {
+        Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing
+        $expected = ((Get-Content -Path $ShaPath -Raw) -split '\s+')[0].Trim().ToLowerInvariant()
+        $actual = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($expected -ne $actual) {
+            Remove-Item -Path $AgentPath, $ShaPath -Force -ErrorAction SilentlyContinue
+            Log-Error "Checksum mismatch: got $actual, want $expected"
+            exit 1
+        }
+        Log-Success "Checksum OK"
+    }
+    catch {
+        Log-Warning "Checksum file not available; verification skipped ($_)"
+    }
+    finally {
+        Remove-Item -Path $ShaPath -Force -ErrorAction SilentlyContinue
+    }
+}
+else {
+    Log-Warning "Checksum verification disabled by --install-no-verify"
+}
 
 # Register and start service
 Log-Step "Configuring Windows service with nssm..."
