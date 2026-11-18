@@ -18,6 +18,7 @@ $InstallVersion = ""
 $AgentRepo = "LHDyx/komari-agent"  # 发布产物来源仓库（owner/name）
 $VerifyChecksum = $true
 $InstallKeepLegacy = $false      # 不自动清理旧版本安装
+$NoHide = $false                 # 安装后不隐藏安装目录
 
 # Parse script arguments
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -29,6 +30,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--install-repo" { $AgentRepo = $args[$i + 1]; $i++; continue }
         "--install-no-verify" { $VerifyChecksum = $false; continue }
         "--install-keep-legacy" { $InstallKeepLegacy = $true; continue }
+        "--install-no-hide" { $NoHide = $true; continue }
         Default { $KomariArgs += $args[$i] }
     }
 }
@@ -140,13 +142,50 @@ if (-not (Test-Path $SmExe)) {
     }
 }
 
-try {
-    $SmVersionOutput = & $SmExe version 2>&1
-    Log-Info "Service manager: $SmExe ($SmVersionOutput)"
+# Downloaded executables carry Mark-of-the-Web and may be blocked from running.
+# Unblock, clear attributes, retry once, then try a copy in %TEMP%; finally
+# fall back to sc.exe service management.
+$UseSc = $false
+$SmVersionOutput = $null
+
+function Reset-SmForExecution {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    try { Unblock-File -Path $Path -ErrorAction SilentlyContinue } catch { }
+    try { (Get-Item -Path $Path -Force).Attributes = 'Normal' } catch { }
 }
-catch {
-    Log-Error "sm.exe failed to execute: $_"
-    exit 1
+
+Reset-SmForExecution $SmExe
+for ($attempt = 1; $attempt -le 2; $attempt++) {
+    try {
+        $SmVersionOutput = & $SmExe version 2>&1
+        if ($SmVersionOutput) { break }
+    }
+    catch {
+        if ($attempt -eq 1) { Start-Sleep -Milliseconds 500; Reset-SmForExecution $SmExe }
+    }
+}
+
+if (-not $SmVersionOutput) {
+    $SmTemp = Join-Path $env:TEMP "sm.exe"
+    try {
+        Copy-Item -Path $SmExe -Destination $SmTemp -Force
+        Reset-SmForExecution $SmTemp
+        $SmVersionOutput = & $SmTemp version 2>&1
+        if ($SmVersionOutput) {
+            $SmExe = $SmTemp
+            Log-Info "Using service manager from $SmTemp"
+        }
+    }
+    catch { }
+}
+
+if (-not $SmVersionOutput) {
+    Log-Warning "sm.exe cannot be executed (access denied or blocked). Falling back to sc.exe."
+    $UseSc = $true
+}
+else {
+    Log-Info "Service manager: $SmExe ($SmVersionOutput)"
 }
 
 # Legacy installation from older defaults (service "komari-agent").
@@ -218,8 +257,14 @@ function Invoke-LegacyCleanup {
     }
 
     Log-Info "Removing legacy agent service '$LegacyService' ($($legacyId.Endpoint))..."
-    & $SmExe stop $LegacyService 2>&1 | Out-Null
-    & $SmExe remove $LegacyService confirm 2>&1 | Out-Null
+    if ($UseSc) {
+        & sc.exe stop $LegacyService 2>&1 | Out-Null
+        & sc.exe delete $LegacyService 2>&1 | Out-Null
+    }
+    else {
+        & $SmExe stop $LegacyService 2>&1 | Out-Null
+        & $SmExe remove $LegacyService confirm 2>&1 | Out-Null
+    }
     if (-not (Get-Service -Name $LegacyService -ErrorAction SilentlyContinue)) {
         Log-Info "Legacy service removed."
     }
@@ -247,28 +292,38 @@ $AgentPath = Join-Path $InstallDir "lh_kmr_ag.exe"
 # Uninstall previous service and binary
 function Uninstall-Previous {
     Log-Step "Checking for existing service..."
-    # Check if service exists using nssm status, as Get-Service might not work for nssm services if not properly registered
-    $serviceStatus = & $SmExe status $ServiceName 2>&1
-    if ($serviceStatus -notmatch "SERVICE_STOPPED" -and $serviceStatus -notmatch "does not exist") {
-        Log-Info "Stopping service $ServiceName..."
-        & $SmExe stop $ServiceName 2>&1 | Out-Null
-    }
-    # Attempt to remove the service using nssm
-    # We check if it exists first by trying to get its status.
-    # nssm remove will succeed if the service exists, and fail otherwise.
-    # We add confirm to avoid interactive prompts.
-    $removeOutput = & $SmExe remove $ServiceName confirm 2>&1
-    if ($LASTEXITCODE -eq 0) {
-    }
-    elseif ($removeOutput -match "Can't open service! (The specified service does not exist as an installed service.)" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
-        Log-Info "Service $ServiceName does not exist or was already removed."
-    }
-    else {
-        # If nssm remove fails for other reasons, try sc.exe delete as a fallback for older installations
+    if ($UseSc) {
         $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
         if ($svc) {
-            Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
-            sc.exe delete $ServiceName | Out-Null
+            Log-Info "Stopping and removing service $ServiceName (sc.exe)..."
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+            & sc.exe delete $ServiceName 2>&1 | Out-Null
+        }
+    }
+    else {
+        # Check if service exists using nssm status, as Get-Service might not work for nssm services if not properly registered
+        $serviceStatus = & $SmExe status $ServiceName 2>&1
+        if ($serviceStatus -notmatch "SERVICE_STOPPED" -and $serviceStatus -notmatch "does not exist") {
+            Log-Info "Stopping service $ServiceName..."
+            & $SmExe stop $ServiceName 2>&1 | Out-Null
+        }
+        # Attempt to remove the service using nssm
+        # We check if it exists first by trying to get its status.
+        # nssm remove will succeed if the service exists, and fail otherwise.
+        # We add confirm to avoid interactive prompts.
+        $removeOutput = & $SmExe remove $ServiceName confirm 2>&1
+        if ($LASTEXITCODE -eq 0) {
+        }
+        elseif ($removeOutput -match "Can't open service! (The specified service does not exist as an installed service.)" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
+            Log-Info "Service $ServiceName does not exist or was already removed."
+        }
+        else {
+            # If nssm remove fails for other reasons, try sc.exe delete as a fallback for older installations
+            $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if ($svc) {
+                Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
+                sc.exe delete $ServiceName | Out-Null
+            }
         }
     }
 
@@ -458,20 +513,43 @@ else {
 }
 
 # Register and start service
-Log-Step "Configuring Windows service with nssm..."
 $argString = $KomariArgs -join ' '
-# The application path is passed WITHOUT literal quotes: PowerShell already
-# quotes native arguments containing spaces on the command line, while
-# embedded quotes made nssm store a broken Application path (komari-agent#118).
-& $SmExe install $ServiceName $AgentPath $argString
-# Set display name and startup type using nssm
-& $SmExe set $ServiceName DisplayName "Komari Agent Service"
-& $SmExe set $ServiceName Start SERVICE_AUTO_START
-& $SmExe set $ServiceName AppExit Default Restart
-& $SmExe set $ServiceName AppRestartDelay 5000
-# Start the service using nssm
-& $SmExe start $ServiceName
-Log-Success "Service $ServiceName installed and started using nssm."
+if ($UseSc) {
+    Log-Step "Configuring Windows service with sc.exe..."
+    $binPath = '"' + $AgentPath + '"'
+    if ($argString) { $binPath = $binPath + ' ' + $argString }
+    New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName "Komari Agent Service" -StartupType Automatic | Out-Null
+    # Exit code 42 (self-update restart) is treated as a failure, so restart it.
+    & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 2>&1 | Out-Null
+    Start-Service -Name $ServiceName
+    Log-Success "Service $ServiceName installed and started using sc.exe."
+}
+else {
+    Log-Step "Configuring Windows service with nssm..."
+    # The application path is passed WITHOUT literal quotes: PowerShell already
+    # quotes native arguments containing spaces on the command line, while
+    # embedded quotes made nssm store a broken Application path (komari-agent#118).
+    & $SmExe install $ServiceName $AgentPath $argString
+    # Set display name and startup type using nssm
+    & $SmExe set $ServiceName DisplayName "Komari Agent Service"
+    & $SmExe set $ServiceName Start SERVICE_AUTO_START
+    & $SmExe set $ServiceName AppExit Default Restart
+    & $SmExe set $ServiceName AppRestartDelay 5000
+    # Start the service using nssm
+    & $SmExe start $ServiceName
+    Log-Success "Service $ServiceName installed and started using nssm."
+}
+
+# Hide the install directory (system + hidden) unless disabled.
+if (-not $NoHide) {
+    try {
+        & attrib.exe +s +h $InstallDir | Out-Null
+        Log-Success "Marked $InstallDir as a hidden system folder (attrib +s +h)."
+    }
+    catch {
+        Log-Warning "Could not mark $InstallDir hidden: $_"
+    }
+}
 
 Log-Success "Komari Agent installation completed!"
 Log-Config "Service name: $ServiceName"
