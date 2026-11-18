@@ -200,6 +200,11 @@ WantedBy=multi-user.target
 8. 服务启动后，agent 会向每个交互式登录会话弹出安全通知（见
    [windows-notification.md](windows-notification.md)）
 
+> **关于 sc.exe 与日志**：`sc.exe` 是系统自带命令，本身不落文件；服务注册项属于任何
+> 开机自启的服务（nssm 方式同样有），卸载时删除。SCM 的系统事件日志（7036/7031 等）
+> 对所有服务统一记录，没有受支持的按服务关闭方式。若不想出现 sc 回退，加
+> `--install-no-sc-fallback`，sm.exe 不可用时直接报错退出。
+
 注意事项：
 
 - 服务默认以 **LocalSystem** 运行（nssm 默认），因此能向用户会话注入通知进程
