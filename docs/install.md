@@ -27,7 +27,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
 
 | 行为 | 说明 |
 | --- | --- |
-| 版本解析 | 自动选择最新的 `<x.y.z>-custom.<i>` 正式构建，忽略预览版和 Snapshot |
+| 版本解析 | 自动选择最新的 `<x.y.z>-custom.<i>` 正式构建，忽略预览版和 Snapshot；
+  解析顺序：GitHub API（多镜像）→ `version.txt`（raw，经镜像）→ `releases.atom`；
+  全部失败时可用 `--install-version <tag>` 指定 |
 | 指定版本 | `--install-version 1.5.11-custom.1`（也接受预览版 tag） |
 | 校验 | 下载后校验 `.sha256`，不匹配立即中止；`--install-no-verify` 可关闭 |
 | 预演 | `--install-dry-run` 只打印解析出的版本与 URL，不下载、不安装 |

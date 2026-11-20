@@ -35,8 +35,11 @@ log_config() {
     echo -e "${CYAN}[CONFIG]${NC} $1"
 }
 
-# $EUID 是 bash 专有变量, ash/dash 下未定义, 补 POSIX 回退
-EUID=${EUID:-$(id -u)}
+# 注意：EUID 在 bash 中是只读变量，不能赋值；统一用 IS_ROOT。
+IS_ROOT=0
+if [ "$(id -u)" -eq 0 ]; then
+    IS_ROOT=1
+fi
 
 # Default values
 service_name="kmr-ag"
@@ -59,7 +62,7 @@ case $os_type in
         os_name="darwin"
         target_dir="/opt/kmr/lh"
         # 非 root 且 /opt/kmr/lh 不可写时，退到用户目录
-        if [ ! -w "/opt/kmr/lh" ] && [ "$EUID" -ne 0 ]; then
+        if [ ! -w "/opt/kmr/lh" ] && [ "$IS_ROOT" -ne 1 ]; then
             target_dir="$HOME/.kmr/lh"
             log_info "No write permission to /opt/kmr/lh, using user directory: $target_dir"
         fi
@@ -138,7 +141,7 @@ done
 komari_args="${komari_args# }"
 
 # A direct, unprivileged installation belongs entirely to the invoking user.
-if [ "$EUID" -ne 0 ] && [ "$install_dir_specified" = false ]; then
+if [ "$IS_ROOT" -ne 1 ] && [ "$install_dir_specified" = false ]; then
     case "$os_name" in
         linux|freebsd)
             target_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kmr/lh"
@@ -152,7 +155,7 @@ if [ "$os_name" = "windows" ]; then
 fi
 
 # User services are the only service type a non-root Linux installation can manage.
-if [ "$EUID" -ne 0 ] && [ "$os_name" = "linux" ]; then
+if [ "$IS_ROOT" -ne 1 ] && [ "$os_name" = "linux" ]; then
     if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
         user_service=true
     else
@@ -295,7 +298,7 @@ cleanup_legacy_unit() {
 
     case "$_action" in
         systemd-system|openrc|procd|upstart|launchd-system)
-            if [ "$EUID" -ne 0 ]; then
+            if [ "$IS_ROOT" -ne 1 ]; then
                 log_warning "Found legacy agent ($_desc) but not running as root; leaving it untouched."
                 return 0
             fi
@@ -413,7 +416,7 @@ install_dependencies() {
     done
 
     if [ -n "$missing_deps" ]; then
-        if [ "$EUID" -ne 0 ]; then
+        if [ "$IS_ROOT" -ne 1 ]; then
             log_error "Missing required dependencies:$missing_deps"
             log_info "Install them with your system package manager, then run this script again."
             exit 1
@@ -543,15 +546,52 @@ resolve_snapshot_version() {
     return 1
 }
 
+# 依次输出候选 URL：显式 ghproxy -> 常见镜像 -> 直连
+candidate_urls() {
+    _path="$1"
+    if [ -n "$github_proxy" ]; then
+        printf '%s\n' "${github_proxy}/${_path}"
+    fi
+    printf '%s\n' "https://gh-proxy.com/${_path}"
+    printf '%s\n' "https://ghfast.top/${_path}"
+    printf '%s\n' "https://ghproxy.net/${_path}"
+    printf '%s\n' "https://${_path}"
+}
+
+# 版本文件：发布流程在正式版发布时更新，raw 可经镜像访问，绕开 api.github.com
+resolve_version_file() {
+    for _u in $(candidate_urls "raw.githubusercontent.com/${agent_repo}/refs/heads/main/version.txt"); do
+        _v=$(curl -fsSL --connect-timeout 10 --max-time 20 "$_u" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$_v" in
+            [0-9]*.[0-9]*.[0-9]*-custom.[0-9]*)
+                RESOLVED_CUSTOM_VERSION="$_v"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+# Atom 订阅（只含最近若干条，作为版本文件之外的补充）
+resolve_atom_feed() {
+    for _u in $(candidate_urls "github.com/${agent_repo}/releases.atom"); do
+        _tags=$(curl -fsSL --connect-timeout 15 --max-time 25 -A "Mozilla/5.0" "$_u" 2>/dev/null |
+            grep -oE 'releases/tag/[^"]+' |
+            sed 's#.*/##' |
+            grep -E '^[0-9]+\.[0-9]+\.[0-9]+-custom\.[0-9]{1,8}$' || true)
+        if [ -n "$_tags" ]; then
+            RESOLVED_CUSTOM_VERSION=$(printf '%s\n' "$_tags" | (sort -V 2>/dev/null || sort) | tail -n 1)
+            return 0
+        fi
+    done
+    return 1
+}
+
 resolve_custom_version() {
     # 从 Releases 列表里挑选最新的正式构建 tag：<x.y.z>-custom.<i>
     # 预览版（-custom-pre.<i>）、Snapshot 和其它格式都不会被选中。
     custom_api_url="https://api.github.com/repos/${agent_repo}/releases?per_page=100"
-    if [ -n "$github_proxy" ]; then
-        custom_api_urls="${github_proxy}/${custom_api_url} ${custom_api_url}"
-    else
-        custom_api_urls="$custom_api_url"
-    fi
+    custom_api_urls="$(candidate_urls "api.github.com/repos/${agent_repo}/releases?per_page=100")"
 
     for api_url in $custom_api_urls; do
         if ! releases_json=$(curl -fsSL --connect-timeout 15 \
@@ -573,19 +613,21 @@ resolve_custom_version() {
             fi
         fi
 
-        if [ "$api_url" != "$custom_api_url" ]; then
-            log_warning "Failed to resolve releases through GitHub proxy, retrying directly."
-        fi
     done
+
+    # API 不可用时（DNS 被拦、镜像 403 等）依次尝试版本文件与 Atom
+    if resolve_version_file; then
+        log_info "Resolved latest release from version.txt: ${RESOLVED_CUSTOM_VERSION}"
+        return 0
+    fi
+    if resolve_atom_feed; then
+        log_info "Resolved latest release from releases.atom: ${RESOLVED_CUSTOM_VERSION}"
+        return 0
+    fi
 
     # 回退：仓库没有 <x.y.z>-custom.<i> 形式时，使用 GitHub 的 latest release
     # （例如 --install-repo komari-monitor/komari-agent 安装官方版本）。
-    latest_api_url="https://api.github.com/repos/${agent_repo}/releases/latest"
-    if [ -n "$github_proxy" ]; then
-        latest_api_urls="${github_proxy}/${latest_api_url} ${latest_api_url}"
-    else
-        latest_api_urls="$latest_api_url"
-    fi
+    latest_api_urls="$(candidate_urls "api.github.com/repos/${agent_repo}/releases/latest")"
     for api_url in $latest_api_urls; do
         if latest_json=$(curl -fsSL --connect-timeout 15 \
             -H "Accept: application/vnd.github+json" \
@@ -659,7 +701,7 @@ uninstall_previous
 
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
-if [ "$EUID" -eq 0 ] && [ "$service_user" != "root" ]; then
+if [ "$IS_ROOT" -eq 1 ] && [ "$service_user" != "root" ]; then
     chown "$service_user" "$target_dir"
 fi
 
@@ -740,7 +782,7 @@ fi
 
 # Set executable permissions
 chmod +x "$komari_agent_path"
-if [ "$EUID" -eq 0 ] && [ "$service_user" != "root" ]; then
+if [ "$IS_ROOT" -eq 1 ] && [ "$service_user" != "root" ]; then
     chown "$service_user" "$komari_agent_path"
 fi
 log_success "Komari-agent installed to ${GREEN}$komari_agent_path${NC}"
@@ -990,7 +1032,7 @@ elif [ "$init_system" = "launchd" ]; then
     case "$target_dir" in
         /Users/*) is_user_install=true ;;
     esac
-    [ "$EUID" -ne 0 ] && is_user_install=true
+    [ "$IS_ROOT" -ne 1 ] && is_user_install=true
     
     if [ "$is_user_install" = true ]; then
         # User-level service (LaunchAgent)

@@ -347,15 +347,55 @@ function Uninstall-Previous {
 Invoke-LegacyCleanup -NewArgs $KomariArgs
 Uninstall-Previous
 
+function Get-CandidateUrls {
+    param([string]$Path)
+    $urls = @()
+    if ($GitHubProxy -ne "") { $urls += "$GitHubProxy/$Path" }
+    $urls += "https://gh-proxy.com/$Path"
+    $urls += "https://ghfast.top/$Path"
+    $urls += "https://ghproxy.net/$Path"
+    $urls += "https://$Path"
+    return ,$urls
+}
+
+# version.txt is maintained by the release workflow; readable through raw mirrors
+function Get-VersionFileTag {
+    foreach ($u in (Get-CandidateUrls "raw.githubusercontent.com/$AgentRepo/refs/heads/main/version.txt")) {
+        try {
+            $v = (Invoke-RestMethod -Uri $u -UseBasicParsing -TimeoutSec 15).ToString().Trim()
+            if ($v -match '^[0-9]+\.[0-9]+\.[0-9]+-custom\.[0-9]+$') { return $v }
+        }
+        catch { }
+    }
+    return $null
+}
+
+function Get-AtomTag {
+    foreach ($u in (Get-CandidateUrls "github.com/$AgentRepo/releases.atom")) {
+        try {
+            $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 25
+            $tags = [regex]::Matches([string]$resp.Content, 'releases/tag/([0-9]+\.[0-9]+\.[0-9]+-custom\.[0-9]+)') |
+                ForEach-Object { $_.Groups[1].Value }
+            if ($tags) {
+                return ($tags |
+                    ForEach-Object {
+                        $p = $_ -split '[.-]'
+                        [pscustomobject]@{ Tag = $_; Major = [int]$p[0]; Minor = [int]$p[1]; Patch = [int]$p[2]; Index = [int]$p[4] }
+                    } |
+                    Sort-Object Major, Minor, Patch, Index |
+                    Select-Object -Last 1).Tag
+            }
+        }
+        catch { }
+    }
+    return $null
+}
+
 function Get-LatestCustomVersion {
     param([Parameter(Mandatory = $true)][string]$AssetName)
 
     # 只认 <x.y.z>-custom.<i> 的正式构建；预览版 -custom-pre.<i> 不会被选中。
-    $ApiUrl = "https://api.github.com/repos/$AgentRepo/releases?per_page=100"
-    $ApiUrls = @($ApiUrl)
-    if ($GitHubProxy -ne "") {
-        $ApiUrls = @("$GitHubProxy/$ApiUrl", $ApiUrl)
-    }
+    $ApiUrls = Get-CandidateUrls "api.github.com/repos/$AgentRepo/releases?per_page=100"
 
     for ($i = 0; $i -lt $ApiUrls.Count; $i++) {
         try {
@@ -390,13 +430,20 @@ function Get-LatestCustomVersion {
         }
     }
 
+    $fromFile = Get-VersionFileTag
+    if ($fromFile) {
+        Log-Info "Resolved latest release from version.txt: $fromFile"
+        return $fromFile
+    }
+    $fromAtom = Get-AtomTag
+    if ($fromAtom) {
+        Log-Info "Resolved latest release from releases.atom: $fromAtom"
+        return $fromAtom
+    }
+
     # 回退：仓库没有 <x.y.z>-custom.<i> 形式时使用 GitHub 的 latest release
     # （例如 --install-repo komari-monitor/komari-agent 安装官方版本）。
-    $LatestUrl = "https://api.github.com/repos/$AgentRepo/releases/latest"
-    $LatestUrls = @($LatestUrl)
-    if ($GitHubProxy -ne "") {
-        $LatestUrls = @("$GitHubProxy/$LatestUrl", $LatestUrl)
-    }
+    $LatestUrls = Get-CandidateUrls "api.github.com/repos/$AgentRepo/releases/latest"
     foreach ($url in $LatestUrls) {
         try {
             $latest = Invoke-RestMethod -Uri $url -UseBasicParsing
@@ -413,11 +460,7 @@ function Get-LatestCustomVersion {
 function Get-LatestSnapshotVersion {
     param([Parameter(Mandatory = $true)][string]$AssetName)
 
-    $ApiUrl = "https://api.github.com/repos/$AgentRepo/releases?per_page=100"
-    $ApiUrls = @($ApiUrl)
-    if ($GitHubProxy -ne "") {
-        $ApiUrls = @("$GitHubProxy/$ApiUrl", $ApiUrl)
-    }
+    $ApiUrls = Get-CandidateUrls "api.github.com/repos/$AgentRepo/releases?per_page=100"
 
     for ($i = 0; $i -lt $ApiUrls.Count; $i++) {
         try {
