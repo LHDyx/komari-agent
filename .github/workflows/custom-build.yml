@@ -220,3 +220,16 @@ jobs:
             FLAGS+=(--prerelease)
           fi
           gh release create "${RELTAG}" "${FLAGS[@]}" artifacts/komari-agent-*
+
+          # 正式版发布后更新 version.txt（raw 可经镜像访问，绕开 api.github.com）
+          if [ "${PRERELEASE}" != "true" ]; then
+            CONTENT_B64="$(printf '%s' "${RELTAG}" | base64 | tr -d '\n')"
+            FILE_SHA="$(gh api "repos/${REPO}/contents/version.txt" --jq .sha 2>/dev/null || true)"
+            API_ARGS=(-f "message=chore: record latest release ${RELTAG}" -f "content=${CONTENT_B64}")
+            if [ -n "${FILE_SHA}" ]; then
+              API_ARGS+=(-f "sha=${FILE_SHA}")
+            fi
+            if ! gh api -X PUT "repos/${REPO}/contents/version.txt" "${API_ARGS[@]}" >/dev/null; then
+              echo "WARNING: could not update version.txt"
+            fi
+          fi
