@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '内嵌 agent 版本（留空则读取版本库中的 version.txt）'
+        description: '内嵌 agent 版本。留空则使用 version.txt（当前为最新正式版）'
         required: false
+        default: ''
         type: string
       publish:
-        description: '是否发布到滚动 installer Release'
+        description: '是否发布到滚动 offline-installer Release'
         required: false
         type: boolean
         default: true
