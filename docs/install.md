@@ -80,23 +80,26 @@ iwr 'https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/import
 
 ## 零之三、离线安装器（连不上 GitHub）
 
-滚动标签 **`offline-installer`** 的 Release 提供每个平台/架构一个可执行文件，内嵌对应 agent、
-安装脚本和（Windows）nssm，不需要访问 GitHub：
+每个正式版都会生成一个**版本化标签** `offline-installer-<正式版 tag>` 的 Release，提供每个平台/架构
+一个可执行文件；内嵌的 agent 就是该正式版已发布的资产（逐字节一致，不从源码重建）。
 
 ```bash
-# Linux（以 amd64 为例）
-curl -fsSLO https://github.com/LHDyx/komari-agent/releases/download/offline-installer/komari-agent-installer-linux-amd64
+# Linux（以 1.5.11-custom.2 / amd64 为例）
+TAG=offline-installer-1.5.11-custom.2
+curl -fsSLO https://github.com/LHDyx/komari-agent/releases/download/$TAG/komari-agent-installer-linux-amd64
 chmod +x komari-agent-installer-linux-amd64
 sudo ./komari-agent-installer-linux-amd64 -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
 ```
 
 ```powershell
 # Windows（管理员 PowerShell）
-iwr 'https://github.com/LHDyx/komari-agent/releases/download/offline-installer/komari-agent-installer-windows-amd64.exe' -UseBasicParsing -OutFile kmr-installer.exe
+$TAG='offline-installer-1.5.11-custom.2'
+iwr "https://github.com/LHDyx/komari-agent/releases/download/$TAG/komari-agent-installer-windows-amd64.exe" -UseBasicParsing -OutFile kmr-installer.exe
 .\kmr-installer.exe -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
 ```
 
-其他资源名：`komari-agent-installer-linux-arm64`、`linux-arm`、`linux-386`、`linux-loong64`、
+标签规则：`offline-installer-<x.y.z-custom.i>`，每个正式版独立保留；当前正式版 tag 可查看仓库的
+`version.txt`。其他资源名：`komari-agent-installer-linux-arm64`、`linux-arm`、`linux-386`、`linux-loong64`、
 `windows-arm64.exe`、`darwin-amd64|arm64`、`freebsd-*`，均带同名 `.sha256`。
 
 安装器选项：
