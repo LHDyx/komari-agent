@@ -112,7 +112,9 @@ jobs:
           curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$PAYLOAD/$NAME.sha256" "${URL}.sha256"
           ( cd "$PAYLOAD" && sha256sum -c "$NAME.sha256" )
           mv "$PAYLOAD/$NAME" "$PAYLOAD/agent"
-          cp install.sh install.ps1 version.txt "$PAYLOAD/"
+          cp install.sh install.ps1 "$PAYLOAD/"
+          # 安装器 --version 读取这个文件，必须与本次请求的发布版本一致
+          printf '%s\n' "$VERSION" > "$PAYLOAD/version.txt"
 
       - name: Fetch nssm for windows builds
         if: matrix.goos == 'windows'
