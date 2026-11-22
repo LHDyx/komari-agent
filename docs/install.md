@@ -78,6 +78,40 @@ iwr 'https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/import
 - `--dry-run` 只打印解析结果
 - 解析完成后调用本仓库的 `install.sh` / `install.ps1`，后续就是正常的安装流程
 
+## 零之三、离线安装器（连不上 GitHub）
+
+滚动标签 **`installer`** 的 Release 提供每个平台/架构一个可执行文件，内嵌对应 agent、
+安装脚本和（Windows）nssm，不需要访问 GitHub：
+
+```bash
+# Linux（以 amd64 为例）
+curl -fsSLO https://github.com/LHDyx/komari-agent/releases/download/installer/komari-agent-installer-linux-amd64
+chmod +x komari-agent-installer-linux-amd64
+sudo ./komari-agent-installer-linux-amd64 -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
+```
+
+```powershell
+# Windows（管理员 PowerShell）
+iwr 'https://github.com/LHDyx/komari-agent/releases/download/installer/komari-agent-installer-windows-amd64.exe' -UseBasicParsing -OutFile kmr-installer.exe
+.\kmr-installer.exe -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
+```
+
+其他资源名：`komari-agent-installer-linux-arm64`、`linux-arm`、`linux-386`、`linux-loong64`、
+`windows-arm64.exe`、`darwin-amd64|arm64`、`freebsd-*`，均带同名 `.sha256`。
+
+安装器选项：
+
+| 选项 | 作用 |
+| --- | --- |
+| `--extract <目录>` | 只释放文件（agent、安装脚本、sha256、README），拷到离线机器再安装 |
+| `--dry-run` | 显示目标平台、内嵌 agent 版本和参数 |
+| `--version` | 显示内嵌 agent 版本 |
+| `--keep-temp` | 安装后保留临时目录 |
+
+- agent 参数（`-e/-t/-i/--month-rotate/--disable-web-ssh/...`）原样透传
+- 安装器不需要联网；**agent 连面板仍然需要网络**
+- 离线环境建议加 `--disable-auto-update`（自动更新需要访问 GitHub）
+
 ## 一、Linux / macOS / FreeBSD：`install.sh`
 
 ### 1. 参数

@@ -1,0 +1,181 @@
+name: Offline Installer
+
+# 构建单文件离线安装器：每个 OS/架构一个可执行文件，内嵌对应 agent、
+# 安装脚本、version.txt（Windows 另含 nssm 的 sm.exe）。
+# 产物发布到滚动标签 "installer" 的 Release，可用 curl 直接下载。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '内嵌 agent 版本（留空则读取版本库中的 version.txt）'
+        required: false
+        type: string
+      publish:
+        description: '是否发布到滚动 installer Release'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: offline-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: installer
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            VERSION="$(tr -d '[:space:]' < version.txt)"
+          fi
+          if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-custom\.[0-9]+|-custom-pre\.[0-9]+)?$'; then
+            echo "Invalid version: ${VERSION}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Embedded agent version: ${VERSION}"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        exclude:
+          - goos: windows
+            goarch: arm
+          - goos: darwin
+            goarch: 386
+          - goos: darwin
+            goarch: arm
+        include:
+          - goos: linux
+            goarch: loong64
+        goos: [windows, linux, darwin, freebsd]
+        goarch: [amd64, arm64, 386, arm]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare payload
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          PAYLOAD=cmd/offline-installer/payload
+          mkdir -p "$PAYLOAD"
+          AGENT="$PAYLOAD/agent"
+          if [ "$GOOS" = "windows" ]; then
+            AGENT="$PAYLOAD/agent.exe"
+          fi
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
+            -ldflags="-s -w -X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION}" \
+            -o "$AGENT" .
+          cp install.sh install.ps1 version.txt "$PAYLOAD/"
+          if [ -f "$AGENT" ] && [ ! -f "$PAYLOAD/agent" ]; then
+            cp "$AGENT" "$PAYLOAD/agent"
+          fi
+
+      - name: Fetch nssm for windows builds
+        if: matrix.goos == 'windows'
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --connect-timeout 20 -o /tmp/nssm.zip https://nssm.cc/release/nssm-2.24.zip
+          rm -rf /tmp/nssm && mkdir -p /tmp/nssm
+          unzip -q -o /tmp/nssm.zip -d /tmp/nssm
+          NSSM="$(find /tmp/nssm -path '*win32/nssm.exe' -type f | head -n 1)"
+          if [ -z "$NSSM" ]; then
+            echo "nssm.exe not found in archive" >&2
+            exit 1
+          fi
+          cp "$NSSM" cmd/offline-installer/payload/sm.exe
+
+      - name: Build installer
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          NAME="komari-agent-installer-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            NAME="${NAME}.exe"
+          fi
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -tags offline_payload -trimpath \
+            -ldflags="-s -w" -o "$NAME" ./cmd/offline-installer
+          sha256sum "$NAME" > "$NAME.sha256"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: komari-agent-installer-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: [prepare, build]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish rolling installer release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -alR artifacts
+          NOTES="Offline installers for Komari Agent.
+
+          - Embedded agent version: \`${VERSION}\`
+          - Source: ${REPO}@${GITHUB_SHA}
+          - Actions run: ${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}
+
+          Each asset is a single executable that installs the agent without
+          contacting GitHub. Assets are named \`komari-agent-installer-<os>-<arch>\`."
+
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "Replacing existing ${RELEASE_TAG} release..."
+            gh release delete "${RELEASE_TAG}" --repo "${REPO}" --cleanup-tag --yes
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --repo "${REPO}" \
+            --target "${GITHUB_SHA}" \
+            --title "Offline Installers (${VERSION})" \
+            --notes "${NOTES}" \
+            --latest=false \
+            artifacts/komari-agent-installer-*

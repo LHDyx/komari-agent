@@ -13,3 +13,6 @@ config.json
 
 # 本地跟进上游脚本（个人 fork 用，不提交）
 sync-upstream.sh
+
+# 离线安装器构建时临时放入的 payload
+cmd/offline-installer/payload/

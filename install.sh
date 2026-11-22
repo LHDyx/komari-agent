@@ -51,6 +51,7 @@ install_no_mirror=false # 关闭自动加速镜像
 agent_repo="${KOMARI_AGENT_REPO:-LHDyx/komari-agent}" # 二进制与安装脚本来源仓库（owner/name）
 install_verify=true    # 校验发布产物附带的 .sha256
 install_dry_run=false  # 只解析版本与 URL，不下载、不安装
+install_file=""        # 直接从本地文件安装（离线包/离线安装器使用）
 install_keep_legacy=false # 不自动清理旧版本安装
 service_user="${SUDO_USER:-$(id -un)}"
 user_service=false
@@ -120,6 +121,10 @@ while [ $# -gt 0 ]; do
         --install-dry-run)
             install_dry_run=true
             shift
+            ;;
+        --install-file)
+            install_file="$2"
+            shift 2
             ;;
         --install-keep-legacy)
             install_keep_legacy=true
@@ -646,6 +651,14 @@ resolve_custom_version() {
     return 1
 }
 
+if [ -n "$install_file" ]; then
+    if [ ! -f "$install_file" ]; then
+        log_error "Local install file not found: $install_file"
+        exit 1
+    fi
+    version_to_install="local"
+    download_url="$install_file"
+else
 version_to_install=""
 if [ -n "$install_version" ]; then
     if [ "$install_version" = "snapshot" ]; then
@@ -681,13 +694,19 @@ else
     download_url="https://github.com/${agent_repo}/releases/${download_path}/${file_name}"
 fi
 
+fi
+
 if [ "$install_dry_run" = "true" ]; then
     log_config "Dry run - nothing will be installed:"
     log_config "  Repository: ${agent_repo}"
     log_config "  Version:    ${version_to_install}"
     log_config "  OS/Arch:    ${os_name}/${arch}"
     log_config "  Asset:      ${file_name}"
-    log_config "  URL:        ${download_url}"
+    if [ -n "$install_file" ]; then
+        log_config "  Local file: ${install_file}"
+    else
+        log_config "  URL:        ${download_url}"
+    fi
     log_config "  Install dir: ${target_dir}"
     log_config "  Service:    ${service_name}"
     exit 0
@@ -719,20 +738,31 @@ https://ghproxy.net/${download_url}
 fi
 
 dl_ok=""
-for u in $download_urls; do
-    log_step "Downloading $file_name ..."
-    log_info "URL: ${CYAN}$u${NC}"
-    if curl -fL --connect-timeout 15 -o "$komari_agent_path" "$u" && [ -s "$komari_agent_path" ]; then
+if [ -n "$install_file" ]; then
+    log_step "Installing local file: ${install_file}"
+    if cp -f "$install_file" "$komari_agent_path" && [ -s "$komari_agent_path" ]; then
         dl_ok=1
-        break
     fi
-    rm -f "$komari_agent_path"
-done
+    if [ -z "$dl_ok" ]; then
+        log_error "Failed to copy local install file: ${install_file}"
+        exit 1
+    fi
+else
+    for u in $download_urls; do
+        log_step "Downloading $file_name ..."
+        log_info "URL: ${CYAN}$u${NC}"
+        if curl -fL --connect-timeout 15 -o "$komari_agent_path" "$u" && [ -s "$komari_agent_path" ]; then
+            dl_ok=1
+            break
+        fi
+        rm -f "$komari_agent_path"
+    done
 
-if [ -z "$dl_ok" ]; then
-    log_error "Download failed from all sources (direct + mirrors)"
-    log_error "Retry later, or specify --install-ghproxy <mirror-prefix> manually"
-    exit 1
+    if [ -z "$dl_ok" ]; then
+        log_error "Download failed from all sources (direct + mirrors)"
+        log_error "Retry later, or specify --install-ghproxy <mirror-prefix> manually"
+        exit 1
+    fi
 fi
 
 sha256_of() {
@@ -753,13 +783,19 @@ if [ "$install_verify" = "true" ]; then
     log_step "Verifying SHA-256 checksum..."
     sha_file="$(dirname "$komari_agent_path")/.komari-agent.sha256"
     sha_ok=""
-    for u in $download_urls; do
-        if curl -fL --connect-timeout 15 -o "$sha_file" "${u}.sha256" 2>/dev/null && [ -s "$sha_file" ]; then
-            sha_ok=1
-            break
+    if [ -n "$install_file" ]; then
+        if [ -f "${install_file}.sha256" ] && [ -s "${install_file}.sha256" ]; then
+            cp -f "${install_file}.sha256" "$sha_file" && sha_ok=1
         fi
-        rm -f "$sha_file"
-    done
+    else
+        for u in $download_urls; do
+            if curl -fL --connect-timeout 15 -o "$sha_file" "${u}.sha256" 2>/dev/null && [ -s "$sha_file" ]; then
+                sha_ok=1
+                break
+            fi
+            rm -f "$sha_file"
+        done
+    fi
     if [ -n "$sha_ok" ]; then
         expected="$(awk '{print $1; exit}' "$sha_file" | tr 'A-F' 'a-f')"
         actual="$(sha256_of "$komari_agent_path" | tr 'A-F' 'a-f')"

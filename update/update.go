@@ -34,6 +34,9 @@ var (
 	// AllowPrerelease 允许从自建仓库选中带预发布标识的自构建 tag（如 1.5.11-custom.2601011200）。
 	// 仅在更新源不是上游仓库时开启，官方稳定通道的规则保持不变。
 	AllowPrerelease bool
+	// FollowLatest 为 true 时自动更新跟随最新正式版（可跨 major.minor）；
+	// 为 false 时只跟进当前 major.minor 线（上游默认行为）。
+	FollowLatest bool = true
 )
 
 // isCustomReleaseVersion 判断版本是否为自构建正式版：<major>.<minor>.<patch>-custom.<i>
@@ -720,6 +723,13 @@ func runUpdateCheck(deps updateDeps) error {
 		return nil
 	}
 
+	if FollowLatest {
+		return checkAndUpdateStable(&current, updateTarget{
+			kind:            targetStableLatest,
+			input:           "latest",
+			allowPrerelease: AllowPrerelease,
+		}, deps)
+	}
 	return checkAndUpdateStable(&current, updateTarget{
 		kind:            targetCurrentLine,
 		version:         current,
