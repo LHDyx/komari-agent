@@ -125,7 +125,7 @@ POST 回退模式下并行两件事：
 ## 五、自更新（`update/`）
 
 - 启动后立即检查一次，之后每 **6 小时**
-- 只跟进当前 `major.minor` 线内更高版本
+- **默认跟随最新正式版**（可跨 major.minor）；加 `--update-current-line` 可恢复为只跟当前线
 - 本 fork 的过滤规则：自建仓库下只接受 tag 形如 `<base>-custom.<i>`；预览版与官方版本都不选
 - 下载 `komari-agent-<os>-<arch>`，校验 GitHub 提供的 sha256 digest，`go-update` 原地替换
 - 成功后进程以**退出码 42** 退出；systemd `Restart=always` / sm.exe（nssm）`AppExit Restart` 负责拉起

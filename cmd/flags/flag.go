@@ -30,6 +30,7 @@ type Config struct {
 	DisableCompression    bool    `json:"disable_compression" env:"AGENT_DISABLE_COMPRESSION"`         // 禁用v2传输压缩
 	PreferIPVersion       string  `json:"prefer_ip_version" env:"AGENT_PREFER_IP_VERSION"`             // 面板连接优先使用的 IP 版本：4 或 6
 	UpdateRepo            string  `json:"update_repo" env:"AGENT_UPDATE_REPO"`                         // 自动更新查询的 GitHub 仓库（owner/name），默认 LHDyx/komari-agent
+	UpdateCurrentLine     bool    `json:"update_current_line" env:"AGENT_UPDATE_CURRENT_LINE"`         // 只跟进当前 major.minor 线（默认跟随最新正式版）
 
 }
 

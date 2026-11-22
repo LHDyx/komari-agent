@@ -18,6 +18,8 @@ $InstallVersion = ""
 $AgentRepo = "LHDyx/komari-agent"  # 发布产物来源仓库（owner/name）
 $VerifyChecksum = $true
 $InstallKeepLegacy = $false      # 不自动清理旧版本安装
+$InstallFile = ""                # 直接从本地文件安装（离线安装器使用）
+$InstallSmExe = ""               # 离线提供的服务管理器（nssm 改名）
 $NoHide = $false                 # 安装后不隐藏安装目录
 $AllowScFallback = $false        # 默认不用 sc；显式加 --install-use-sc 才在 sm 失败时回退
 
@@ -31,6 +33,8 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--install-repo" { $AgentRepo = $args[$i + 1]; $i++; continue }
         "--install-no-verify" { $VerifyChecksum = $false; continue }
         "--install-keep-legacy" { $InstallKeepLegacy = $true; continue }
+        "--install-file" { $InstallFile = $args[$i + 1]; $i++; continue }
+        "--install-sm-exe" { $InstallSmExe = $args[$i + 1]; $i++; continue }
         "--install-no-hide" { $NoHide = $true; continue }
         "--install-use-sc" { $AllowScFallback = $true; continue }
         Default { $KomariArgs += $args[$i] }
@@ -92,6 +96,14 @@ New-Item -ItemType Directory -Path $InstallDir -Force -ErrorAction SilentlyConti
 
 # Service manager: nssm, stored locally as sm.exe and invoked by full path.
 $SmExe = Join-Path $InstallDir "sm.exe"
+if ($InstallSmExe -ne "") {
+    if (-not (Test-Path $InstallSmExe)) {
+        Log-Error "Provided service manager not found: $InstallSmExe"
+        exit 1
+    }
+    Log-Info "Using provided service manager: $InstallSmExe"
+    Copy-Item -Path $InstallSmExe -Destination $SmExe -Force
+}
 if (-not (Test-Path $SmExe)) {
     $NssmCmd = Get-Command nssm -ErrorAction SilentlyContinue
     if ($NssmCmd) {
@@ -496,7 +508,15 @@ function Get-LatestSnapshotVersion {
 }
 
 $versionToInstall = ""
-if ($InstallVersion -ne "") {
+if ($InstallFile -ne "") {
+    if (-not (Test-Path $InstallFile)) {
+        Log-Error "Local install file not found: $InstallFile"
+        exit 1
+    }
+    $versionToInstall = "local"
+    Log-Success "Installing local agent file: $InstallFile"
+}
+elseif ($InstallVersion -ne "") {
     Log-Info "Attempting to install specified version: $InstallVersion"
     if ($InstallVersion -ieq "snapshot") {
         Log-Info "Resolving the latest snapshot version..."
@@ -532,21 +552,43 @@ $DownloadUrl = if ($GitHubProxy) { "$GitHubProxy/https://github.com/$AgentRepo/r
 
 # Download and install
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-Log-Info "URL: $DownloadUrl"
-try {
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+if ($InstallFile -ne "") {
+    Log-Info "Copying local file: $InstallFile"
+    try {
+        Copy-Item -Path $InstallFile -Destination $AgentPath -Force
+    }
+    catch {
+        Log-Error "Failed to copy local install file: $_"
+        exit 1
+    }
+    Log-Success "Installed from local file to $AgentPath"
 }
-catch {
-    Log-Error "Download failed: $_"
-    exit 1
+else {
+    Log-Info "URL: $DownloadUrl"
+    try {
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+    }
+    catch {
+        Log-Error "Download failed: $_"
+        exit 1
+    }
+    Log-Success "Downloaded and saved to $AgentPath"
 }
-Log-Success "Downloaded and saved to $AgentPath"
 
 # Verify SHA-256 when the release provides it
 if ($VerifyChecksum) {
     $ShaPath = "${AgentPath}.sha256"
     try {
-        Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing
+        if ($InstallFile -ne "") {
+            $LocalSha = "${InstallFile}.sha256"
+            if (-not (Test-Path $LocalSha)) {
+                throw "local checksum file not found: $LocalSha"
+            }
+            Copy-Item -Path $LocalSha -Destination $ShaPath -Force
+        }
+        else {
+            Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing
+        }
         $expected = ((Get-Content -Path $ShaPath -Raw) -split '\s+')[0].Trim().ToLowerInvariant()
         $actual = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($expected -ne $actual) {

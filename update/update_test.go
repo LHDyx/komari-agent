@@ -707,3 +707,35 @@ func TestSetRepo(t *testing.T) {
 		t.Fatalf("invalid SetRepo call must not change Repo, got %q", Repo)
 	}
 }
+
+// TestFollowLatestCrossesMinorLines 验证默认跟随最新正式版时可跨 minor：
+// targetStableLatest 会选中 1.6.x-custom.*，而 targetCurrentLine 只认 1.5.x。
+func TestFollowLatestCrossesMinorLines(t *testing.T) {
+	current, err := parseVersion("1.5.11-custom.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := parseVersion("1.6.20-custom.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	latestTarget := updateTarget{kind: targetStableLatest, input: "latest", allowPrerelease: true}
+	if !stableNeedsUpdate(&current, latest, latestTarget) {
+		t.Fatal("latest-line target should update from 1.5.11-custom.2 to 1.6.20-custom.1")
+	}
+
+	lineTarget := updateTarget{kind: targetCurrentLine, version: current, allowPrerelease: true}
+	if stableNeedsUpdate(&current, latest, lineTarget) {
+		t.Fatal("current-line target must not cross to another minor line")
+	}
+
+	// 预览版仍然不会进入自动通道
+	preview, err := parseVersion("1.6.20-custom-pre.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stableNeedsUpdate(&current, preview, latestTarget) {
+		t.Fatal("preview builds must never be auto-selected")
+	}
+}

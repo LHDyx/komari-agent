@@ -78,7 +78,7 @@ komari-agent --endpoint ... --update-repo komari-monitor/komari-agent    # 切�
 
 - **自动通道只认 `<base>-custom.<i>`**：`-custom-pre.<i>` 预览版与官方版本都不会被自动选中；
 - 内嵌版本等于本次 tag 时不会重复安装（`latest.Equals(current)` 直接跳过）；
-- 只跟进当前 major.minor 线内更高的版本；
+- 默认跟随最新正式版（可跨 major.minor）；`--update-current-line` 可恢复为只跟当前线；
 - 指向自己的仓库后不再收到官方更新，官方发新版需 `./sync-upstream.sh` 手动跟并重新构建；
 - 更新是原地替换二进制，失败只能手动覆盖回滚；更新成功后进程以退出码 42 退出，靠 systemd 拉起；
 - 容器内（存在 `/.komari-agent-container`）一律跳过自升级。

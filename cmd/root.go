@@ -64,6 +64,7 @@ var RootCmd = &cobra.Command{
 			return fmt.Errorf("invalid --update-repo value: %w", err)
 		}
 		update.AllowPrerelease = !update.IsUpstreamRepo()
+		update.FollowLatest = !flags.UpdateCurrentLine
 		log.Println("Automatic updates will use repository:", update.Repo)
 		// 捕获中止信号，优雅退出
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -207,6 +208,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableCompression, "disable-compression", false, "Disable v2 gzip/permessage-deflate compression")
 	RootCmd.PersistentFlags().StringVar(&flags.PreferIPVersion, "prefer-ip-version", "", "Prefer IP version for dashboard connections: 4 or 6")
 	RootCmd.PersistentFlags().StringVar(&flags.UpdateRepo, "update-repo", defaultUpdateRepo, "GitHub repository (owner/name) used for automatic updates. Defaults to "+defaultUpdateRepo)
+	RootCmd.PersistentFlags().BoolVar(&flags.UpdateCurrentLine, "update-current-line", false, "Only follow the current major.minor release line instead of the latest stable release")
 	RootCmd.PersistentFlags().ParseErrorsWhitelist.UnknownFlags = true
 }
 
