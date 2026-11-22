@@ -19,7 +19,7 @@
   `sync-upstream.sh`（跟进上游，已 gitignore）、`build-local.sh`（本地交叉编译）、`CUSTOM-BUILD.md`。
 - 所有 GitHub Actions 均已改为**仅手动触发**，推送 main 不构建；日常改动用 `./build-local.sh`。
 - 自动更新默认跟随最新正式版（可跨 minor），`--update-current-line` 可关闭。
-- 离线安装器：`cmd/offline-installer`，CI `offline-installer.yml` 发布到滚动标签 `installer`。
+- 离线安装器：`cmd/offline-installer`，CI `offline-installer.yml` 发布到滚动标签 `offline-installer`。
 - 安装默认值：服务名 `kmr-ag`；目录 `/opt/kmr/lh`（Linux/macOS root）、`C:\kmr\lh`（Windows）；
   二进制 `lh_kmr_ag`（Windows `lh_kmr_ag.exe`）；Windows 服务管理器 nssm 统一保存为 `sm.exe`。
 - 安装脚本会自动清理旧默认安装（`komari-agent`），但仅当端点与 token/自动发现 key 一致；

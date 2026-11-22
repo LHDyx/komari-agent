@@ -2,7 +2,7 @@ name: Offline Installer
 
 # 构建单文件离线安装器：每个 OS/架构一个可执行文件，内嵌对应 agent、
 # 安装脚本、version.txt（Windows 另含 nssm 的 sm.exe）。
-# 产物发布到滚动标签 "installer" 的 Release，可用 curl 直接下载。
+# 产物发布到滚动标签 "offline-installer" 的 Release，可用 curl 直接下载。
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RELEASE_TAG: installer
+  RELEASE_TAG: offline-installer
 
 jobs:
   prepare:
