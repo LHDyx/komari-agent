@@ -80,19 +80,19 @@ iwr 'https://raw.githubusercontent.com/LHDyx/komari-agent/refs/heads/main/import
 
 ## 零之三、离线安装器（连不上 GitHub）
 
-滚动标签 **`installer`** 的 Release 提供每个平台/架构一个可执行文件，内嵌对应 agent、
+滚动标签 **`offline-installer`** 的 Release 提供每个平台/架构一个可执行文件，内嵌对应 agent、
 安装脚本和（Windows）nssm，不需要访问 GitHub：
 
 ```bash
 # Linux（以 amd64 为例）
-curl -fsSLO https://github.com/LHDyx/komari-agent/releases/download/installer/komari-agent-installer-linux-amd64
+curl -fsSLO https://github.com/LHDyx/komari-agent/releases/download/offline-installer/komari-agent-installer-linux-amd64
 chmod +x komari-agent-installer-linux-amd64
 sudo ./komari-agent-installer-linux-amd64 -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
 ```
 
 ```powershell
 # Windows（管理员 PowerShell）
-iwr 'https://github.com/LHDyx/komari-agent/releases/download/installer/komari-agent-installer-windows-amd64.exe' -UseBasicParsing -OutFile kmr-installer.exe
+iwr 'https://github.com/LHDyx/komari-agent/releases/download/offline-installer/komari-agent-installer-windows-amd64.exe' -UseBasicParsing -OutFile kmr-installer.exe
 .\kmr-installer.exe -e https://status.lhdyx.top -t '<TOKEN>' -i 10 --month-rotate 1
 ```
 
