@@ -712,17 +712,15 @@ if [ "$install_dry_run" = "true" ]; then
     exit 0
 fi
 
-# 清理旧版本默认安装（仅在同一端点 + 身份时）
-cleanup_legacy_installation
-
-# Uninstall previous installation (after dry-run, so --install-dry-run has no side effects)
-uninstall_previous
-
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
 if [ "$IS_ROOT" -eq 1 ] && [ "$service_user" != "root" ]; then
     chown "$service_user" "$target_dir"
 fi
+
+# 先下载到临时文件，校验通过后再停旧服务、替换二进制。
+TMP_BIN="${target_dir}/.komari-agent.new.$$"
+trap 'rm -f "${TMP_BIN:-}"' EXIT INT TERM
 
 # Download with automatic mirror fallback.
 # 直连失败自动依次尝试常见 GitHub 加速镜像, 可用 --install-no-mirror 关闭.
@@ -740,7 +738,7 @@ fi
 dl_ok=""
 if [ -n "$install_file" ]; then
     log_step "Installing local file: ${install_file}"
-    if cp -f "$install_file" "$komari_agent_path" && [ -s "$komari_agent_path" ]; then
+    if cp -f "$install_file" "$TMP_BIN" && [ -s "$TMP_BIN" ]; then
         dl_ok=1
     fi
     if [ -z "$dl_ok" ]; then
@@ -751,11 +749,11 @@ else
     for u in $download_urls; do
         log_step "Downloading $file_name ..."
         log_info "URL: ${CYAN}$u${NC}"
-        if curl -fL --connect-timeout 15 -o "$komari_agent_path" "$u" && [ -s "$komari_agent_path" ]; then
+        if curl -fL --connect-timeout 15 -o "$TMP_BIN" "$u" && [ -s "$TMP_BIN" ]; then
             dl_ok=1
             break
         fi
-        rm -f "$komari_agent_path"
+        rm -f "$TMP_BIN"
     done
 
     if [ -z "$dl_ok" ]; then
@@ -798,11 +796,11 @@ if [ "$install_verify" = "true" ]; then
     fi
     if [ -n "$sha_ok" ]; then
         expected="$(awk '{print $1; exit}' "$sha_file" | tr 'A-F' 'a-f')"
-        actual="$(sha256_of "$komari_agent_path" | tr 'A-F' 'a-f')"
+        actual="$(sha256_of "$TMP_BIN" | tr 'A-F' 'a-f')"
         if [ -z "$actual" ]; then
             log_warning "No SHA-256 tool found; checksum verification skipped."
         elif [ "$expected" != "$actual" ]; then
-            rm -f "$komari_agent_path" "$sha_file"
+            rm -f "$TMP_BIN" "$sha_file"
             log_error "Checksum mismatch for ${file_name}: got ${actual}, want ${expected}"
             exit 1
         else
@@ -814,6 +812,14 @@ if [ "$install_verify" = "true" ]; then
     rm -f "$sha_file"
 else
     log_warning "Checksum verification disabled by --install-no-verify"
+fi
+
+# 下载与校验成功，现在才停止旧服务并替换二进制
+cleanup_legacy_installation
+uninstall_previous
+if ! mv -f "$TMP_BIN" "$komari_agent_path"; then
+    log_error "Failed to replace ${komari_agent_path}"
+    exit 1
 fi
 
 # Set executable permissions

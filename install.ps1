@@ -96,12 +96,16 @@ New-Item -ItemType Directory -Path $InstallDir -Force -ErrorAction SilentlyConti
 
 # Service manager: nssm, stored locally as sm.exe and invoked by full path.
 $SmExe = Join-Path $InstallDir "sm.exe"
-if ($InstallSmExe -ne "") {
+if (Test-Path $SmExe) {
+    # nssm is stable and does not need to follow agent updates; reuse it.
+    Log-Info "Reusing existing service manager: $SmExe"
+}
+elseif ($InstallSmExe -ne "") {
     if (-not (Test-Path $InstallSmExe)) {
         Log-Error "Provided service manager not found: $InstallSmExe"
         exit 1
     }
-    Log-Info "Using provided service manager: $InstallSmExe"
+    Log-Info "Installing service manager from $InstallSmExe"
     Copy-Item -Path $InstallSmExe -Destination $SmExe -Force
 }
 if (-not (Test-Path $SmExe)) {
@@ -371,9 +375,6 @@ function Uninstall-Previous {
         Remove-Item $AgentPath -Force
     }
 }
-Invoke-LegacyCleanup -NewArgs $KomariArgs
-Uninstall-Previous
-
 function Get-CandidateUrls {
     param([string]$Path)
     $urls = @()
@@ -566,34 +567,37 @@ Log-Success "Installing Komari Agent version: $versionToInstall"
 $BinaryName = "komari-agent-windows-$arch.exe"
 $DownloadUrl = if ($GitHubProxy) { "$GitHubProxy/https://github.com/$AgentRepo/releases/download/$versionToInstall/$BinaryName" } else { "https://github.com/$AgentRepo/releases/download/$versionToInstall/$BinaryName" }
 
-# Download and install
+# Download to a staging file; only replace the running installation after
+# the download and checksum succeed.
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+$TempAgent = "${AgentPath}.new"
 if ($InstallFile -ne "") {
     Log-Info "Copying local file: $InstallFile"
     try {
-        Copy-Item -Path $InstallFile -Destination $AgentPath -Force
+        Copy-Item -Path $InstallFile -Destination $TempAgent -Force
     }
     catch {
         Log-Error "Failed to copy local install file: $_"
         exit 1
     }
-    Log-Success "Installed from local file to $AgentPath"
+    Log-Success "Staged local file at $TempAgent"
 }
 else {
     Log-Info "URL: $DownloadUrl"
     try {
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing -TimeoutSec 300
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempAgent -UseBasicParsing -TimeoutSec 300
     }
     catch {
         Log-Error "Download failed: $_"
+        Remove-Item -Path $TempAgent -Force -ErrorAction SilentlyContinue
         exit 1
     }
-    Log-Success "Downloaded and saved to $AgentPath"
+    Log-Success "Downloaded to staging file $TempAgent"
 }
 
 # Verify SHA-256 when the release provides it
 if ($VerifyChecksum) {
-    $ShaPath = "${AgentPath}.sha256"
+    $ShaPath = "${TempAgent}.sha256"
     try {
         if ($InstallFile -ne "") {
             $LocalSha = "${InstallFile}.sha256"
@@ -606,9 +610,9 @@ if ($VerifyChecksum) {
             Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing -TimeoutSec 60
         }
         $expected = ((Get-Content -Path $ShaPath -Raw) -split '\s+')[0].Trim().ToLowerInvariant()
-        $actual = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual = (Get-FileHash -Path $TempAgent -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($expected -ne $actual) {
-            Remove-Item -Path $AgentPath, $ShaPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $TempAgent, $ShaPath -Force -ErrorAction SilentlyContinue
             Log-Error "Checksum mismatch: got $actual, want $expected"
             exit 1
         }
@@ -624,6 +628,18 @@ if ($VerifyChecksum) {
 else {
     Log-Warning "Checksum verification disabled by --install-no-verify"
 }
+
+# Staged binary is verified; now stop the old service and replace it.
+Invoke-LegacyCleanup -NewArgs $KomariArgs
+Uninstall-Previous
+try {
+    Move-Item -Path $TempAgent -Destination $AgentPath -Force -ErrorAction Stop
+}
+catch {
+    Log-Error "Failed to replace ${AgentPath}: $_"
+    exit 1
+}
+Log-Success "Agent binary replaced: $AgentPath"
 
 # Register and start service
 $argString = $KomariArgs -join ' '
