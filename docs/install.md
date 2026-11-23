@@ -243,7 +243,7 @@ WantedBy=multi-user.target
 > **关于服务与日志**：服务注册项属于任何开机自启的服务（nssm 方式同样有），卸载时删除。
 > SCM 的系统事件日志（7036/7031 等）对所有服务统一记录，没有受支持的按服务关闭方式。
 > 默认不会用 `sc.exe` 注册服务；`sm.exe` 无法执行时直接报错并提示手动解封或安装 nssm。
-> 确需 sc 兜底时加 `--install-use-sc`。
+> 确需 sc 兜底时加 `--install-use-sc`（agent 已支持原生 Windows 服务模式）。
 
 注意事项：
 

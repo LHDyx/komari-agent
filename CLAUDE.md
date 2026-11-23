@@ -18,6 +18,8 @@
 - 本地新增：`.github/workflows/custom-build.yml`（15 平台在线交叉构建 + 预发布 Release）、
   `sync-upstream.sh`（跟进上游，已 gitignore）、`build-local.sh`（本地交叉编译）、`CUSTOM-BUILD.md`。
 - 所有 GitHub Actions 均已改为**仅手动触发**，推送 main 不构建；日常改动用 `./build-local.sh`。
+- agent 支持原生 Windows 服务模式（SCM 启动时自动识别服务名），`--install-use-sc` 可用；
+  服务日志写入安装目录 `kmr-service.log`。
 - 自动更新默认跟随最新正式版（可跨 minor），`--update-current-line` 可关闭。
 - 离线安装器：`cmd/offline-installer`，CI `offline-installer.yml` 按版本发布到 `offline-installer-<版本>` 标签；payload 直接下载该正式版的已发布资产。
 - 安装默认值：服务名 `kmr-ag`；目录 `/opt/kmr/lh`（Linux/macOS root）、`C:\kmr\lh`（Windows）；

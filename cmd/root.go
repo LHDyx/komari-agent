@@ -69,6 +69,8 @@ var RootCmd = &cobra.Command{
 		// 捕获中止信号，优雅退出
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		setExternalStop(stop)
+		defer setExternalStop(nil)
 
 		stopWarning := startSecurityWarning(stopCtx)
 		defer stopWarning()
