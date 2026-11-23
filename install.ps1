@@ -118,8 +118,22 @@ if (-not (Test-Path $SmExe)) {
         $TempExtractDir = Join-Path $env:TEMP "nssm_extract_temp"
 
         try {
-            Log-Info "Downloading nssm from $NssmZipUrl..."
-            Invoke-WebRequest -Uri $NssmZipUrl -OutFile $TempNssmZipPath -UseBasicParsing
+            $NssmDownloaded = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                    Log-Info "Downloading nssm from $NssmZipUrl (attempt $attempt/3)..."
+                    Invoke-WebRequest -Uri $NssmZipUrl -OutFile $TempNssmZipPath -UseBasicParsing -TimeoutSec 60
+                    $NssmDownloaded = $true
+                    break
+                }
+                catch {
+                    Log-Warning "nssm download failed: $_"
+                    if ($attempt -lt 3) { Start-Sleep -Seconds 3 }
+                }
+            }
+            if (-not $NssmDownloaded) {
+                throw "nssm download failed after 3 attempts"
+            }
 
             if (Test-Path $TempExtractDir) { Remove-Item -Recurse -Force $TempExtractDir }
             New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
@@ -146,7 +160,8 @@ if (-not (Test-Path $SmExe)) {
         }
         catch {
             Log-Error "Failed to download or prepare the service manager: $_"
-            Log-Error "Install nssm manually from https://nssm.cc and ensure nssm.exe is in PATH."
+            Log-Error "Options: retry later, install nssm manually (https://nssm.cc) and put nssm.exe in PATH,"
+            Log-Error "or add --install-use-sc to use the agent's native Windows service instead."
             exit 1
         }
         finally {
@@ -412,7 +427,7 @@ function Get-LatestCustomVersion {
     for ($i = 0; $i -lt $ApiUrls.Count; $i++) {
         try {
             Log-Info "Fetching releases from GitHub API..."
-            $releases = Invoke-RestMethod -Uri $ApiUrls[$i] -UseBasicParsing
+            $releases = Invoke-RestMethod -Uri $ApiUrls[$i] -UseBasicParsing -TimeoutSec 15
         }
         catch {
             $releases = $null
@@ -458,7 +473,7 @@ function Get-LatestCustomVersion {
     $LatestUrls = Get-CandidateUrls "api.github.com/repos/$AgentRepo/releases/latest"
     foreach ($url in $LatestUrls) {
         try {
-            $latest = Invoke-RestMethod -Uri $url -UseBasicParsing
+            $latest = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 15
             if ($latest.tag_name) { return [string]$latest.tag_name }
         }
         catch {
@@ -477,7 +492,7 @@ function Get-LatestSnapshotVersion {
     for ($i = 0; $i -lt $ApiUrls.Count; $i++) {
         try {
             Log-Info "Fetching snapshot releases from GitHub API..."
-            $releases = Invoke-RestMethod -Uri $ApiUrls[$i] -UseBasicParsing
+            $releases = Invoke-RestMethod -Uri $ApiUrls[$i] -UseBasicParsing -TimeoutSec 15
         }
         catch {
             $releases = $null
@@ -540,7 +555,8 @@ else {
         Log-Success "Latest release fetched: $versionToInstall"
     }
     catch {
-        Log-Error "Failed to resolve the latest release: $_"
+        Log-Error "Failed to resolve the latest release from $AgentRepo."
+        Log-Error "Check network access to GitHub or mirrors, or pass --install-version <tag>."
         exit 1
     }
 }
@@ -566,7 +582,7 @@ if ($InstallFile -ne "") {
 else {
     Log-Info "URL: $DownloadUrl"
     try {
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing -TimeoutSec 300
     }
     catch {
         Log-Error "Download failed: $_"
@@ -587,7 +603,7 @@ if ($VerifyChecksum) {
             Copy-Item -Path $LocalSha -Destination $ShaPath -Force
         }
         else {
-            Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing
+            Invoke-WebRequest -Uri "${DownloadUrl}.sha256" -OutFile $ShaPath -UseBasicParsing -TimeoutSec 60
         }
         $expected = ((Get-Content -Path $ShaPath -Raw) -split '\s+')[0].Trim().ToLowerInvariant()
         $actual = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -640,11 +656,19 @@ Log-Success "Service $ServiceName installed and started using nssm."
 # Hide the install directory (system + hidden) unless disabled.
 if (-not $NoHide) {
     try {
-        & attrib.exe +s +h $InstallDir | Out-Null
-        Log-Success "Marked $InstallDir as a hidden system folder (attrib +s +h)."
+        $HideTargets = @($InstallDir)
+        $ParentDir = Split-Path $InstallDir -Parent
+        if ($ParentDir -and (Split-Path $ParentDir -Leaf) -ieq "kmr") {
+            $HideTargets += $ParentDir
+        }
+        foreach ($Target in $HideTargets) {
+            & attrib.exe +s +h $Target | Out-Null
+            & attrib.exe +s +h "$Target\*" /s /d | Out-Null
+        }
+        Log-Success "Marked install path (and its parent 'kmr' when applicable) as hidden/system."
     }
     catch {
-        Log-Warning "Could not mark $InstallDir hidden: $_"
+        Log-Warning "Could not mark install path hidden: $_"
     }
 }
 
