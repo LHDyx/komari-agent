@@ -676,8 +676,8 @@ if [ -n "$install_version" ]; then
 else
     log_info "Resolving the latest release from ${agent_repo} ..."
     if ! resolve_custom_version; then
-        log_error "No release matching <x.y.z>-custom.<i> was found in ${agent_repo}."
-        log_error "Publish a release first, or pass --install-version <tag>."
+        log_error "Failed to resolve the latest release from ${agent_repo}."
+        log_error "Check network access to GitHub or mirrors, or pass --install-version <tag>."
         exit 1
     fi
     version_to_install="$RESOLVED_CUSTOM_VERSION"
