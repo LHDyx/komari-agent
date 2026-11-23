@@ -234,8 +234,9 @@ WantedBy=multi-user.target
 
 6. 安装完成后会把安装目录、其父级 `kmr` 目录（若适用）以及**所有子项**标记为
    Hidden+System（`attrib +s +h` + 递归 `/s /d`），`--install-no-hide` 可关闭
-7. 服务管理器优先使用 `sm.exe`（nssm）；nssm 下载失败会重试 3 次，仍失败时提示
-   手动安装 nssm 或使用 `--install-use-sc`。下载文件会自动 `Unblock-File` 并清除属性，
+7. 服务管理器使用安装目录中的 `sm.exe`（nssm）。**已存在时直接复用，不随 agent 更新替换**
+   （nssm 长期稳定）；仅首次安装时从 PATH/下载/离线包获取。
+   下载失败会重试 3 次，仍失败时提示手动安装或使用 `--install-use-sc`。下载文件会自动 `Unblock-File` 并清除属性，
    仍无法执行时**默认报错退出**；显式加 `--install-use-sc` 才回退到 `sc.exe`
    （`New-Service` + `sc failure` 重启策略）
 8. 服务启动后，agent 会向每个交互式登录会话弹出安全通知（见
@@ -251,6 +252,11 @@ WantedBy=multi-user.target
 - 服务默认以 **LocalSystem** 运行（nssm 默认），因此能向用户会话注入通知进程
 - 命令执行依赖 PowerShell；Web SSH 依赖 ConPTY（Windows 10 1809+）
 - 自更新替换正在运行的服务二进制由 `go-update` 处理，重启由 nssm 负责
+
+### 安装顺序保证
+
+版本解析、下载与 sha256 校验都在**停止旧服务之前**完成；只有校验通过才会停旧服务并替换二进制。
+因此网络失败或下载失败时，现有 agent 会继续运行。Linux 与 Windows 脚本都遵循此顺序。
 
 ## 三、Docker
 
