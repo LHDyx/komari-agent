@@ -193,7 +193,7 @@ jobs:
           # 其余带 -custom 的旧格式（时间戳/额外段）以及早期的 "custom" 固定 tag 全部删除。
           mapfile -t STALE < <(gh release list --repo "${REPO}" --limit 200 \
             --json tagName --jq '.[].tagName' \
-            | { grep -E -- '-custom' || true; } \
+            | { grep -E -- '^[0-9]+\.[0-9]+\.[0-9]+-custom' || true; } \
             | { grep -EvE -- '^[0-9]+\.[0-9]+\.[0-9]+-custom(-pre)?\.[0-9]{1,8}$' || true; })
           for tag in "${STALE[@]:-}"; do
             [ -n "${tag}" ] || continue
