@@ -927,6 +927,37 @@ if [ "$user_service" = true ]; then
 fi
 log_info "Detected init system: ${GREEN}$init_system${NC}"
 
+# 服务启动后等待并校验状态；失败时输出诊断。
+verify_service_started() {
+    case "$init_system" in
+        systemd)
+            systemctl is-active --quiet "$service_name"
+            ;;
+        systemd-user)
+            systemctl --user is-active --quiet "$service_name"
+            ;;
+        openrc)
+            rc-service "$service_name" status >/dev/null 2>&1
+            ;;
+        procd)
+            if [ -x "$service_file" ] && "$service_file" status >/dev/null 2>&1; then
+                return 0
+            fi
+            pgrep -f "$komari_agent_path" >/dev/null 2>&1
+            ;;
+        upstart)
+            initctl status "$service_name" 2>/dev/null | grep -q "start/running"
+            ;;
+        launchd)
+            launchctl print "system/com.komari.${service_name}" >/dev/null 2>&1 ||
+                launchctl print "gui/$(id -u)/com.komari.${service_name}" >/dev/null 2>&1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
 # Handle each init system
 if [ "$init_system" = "nixos" ]; then
     log_warning "NixOS detected. System services must be configured declaratively."
@@ -1183,6 +1214,45 @@ else
     log_error "Unsupported or unknown init system detected: $init_system"
     log_error "Supported init systems: systemd, openrc, procd, launchd"
     exit 1
+fi
+
+if [ "$init_system" != "nixos" ]; then
+    log_step "Verifying service ${service_name} ..."
+    _verify_i=0
+    while [ "$_verify_i" -lt 20 ]; do
+        if verify_service_started; then
+            break
+        fi
+        _verify_i=$((_verify_i + 1))
+        sleep 1
+    done
+
+    if ! verify_service_started; then
+        log_error "Service ${service_name} did not become active."
+        case "$init_system" in
+            systemd)
+                systemctl status --no-pager "$service_name" 2>&1 | tail -n 20
+                ;;
+            systemd-user)
+                systemctl --user status --no-pager "$service_name" 2>&1 | tail -n 20
+                ;;
+            openrc)
+                rc-service "$service_name" status 2>&1
+                ;;
+            procd)
+                "$service_file" status 2>&1
+                ;;
+            upstart)
+                initctl status "$service_name" 2>&1
+                ;;
+            launchd)
+                launchctl print "system/com.komari.${service_name}" 2>&1 | tail -n 20
+                ;;
+        esac
+        log_info "Check logs: journalctl -u ${service_name} -n 50 (systemd) or your init system's logs."
+        exit 1
+    fi
+    log_success "Service ${service_name} is running."
 fi
 
 echo ""

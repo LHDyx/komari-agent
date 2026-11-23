@@ -641,6 +641,66 @@ catch {
 }
 Log-Success "Agent binary replaced: $AgentPath"
 
+function Start-AgentService {
+    Log-Info "Starting service $ServiceName..."
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+    }
+    catch {
+        Log-Warning "Start-Service returned: $_"
+    }
+
+    $Deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $Deadline) {
+        $Svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($Svc -and $Svc.Status -eq "Running") {
+            $ServicePid = (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue).ProcessId
+            Log-Success "Service $ServiceName is running (PID $ServicePid)."
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Show-ServiceDiagnostics {
+    Log-Error "Service $ServiceName did not reach the Running state."
+    Log-Info "--- service status ---"
+    try {
+        & sc.exe queryex $ServiceName 2>&1 | ForEach-Object { Log-Info ([string]$_) }
+    }
+    catch { }
+    if (Test-Path $SmExe) {
+        try {
+            & $SmExe status $ServiceName 2>&1 | ForEach-Object { Log-Info ([string]$_) }
+        }
+        catch { }
+    }
+
+    Log-Info "--- recent system events ---"
+    try {
+        Get-WinEvent -FilterHashtable @{LogName = "System"; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction Stop |
+            Where-Object { $_.Message -match [regex]::Escape($ServiceName) } |
+            Select-Object -First 5 |
+            ForEach-Object {
+                $msg = ($_.Message -replace "\s+", " ")
+                if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
+                Log-Info ("{0} {1}: {2}" -f $_.TimeCreated, $_.Id, $msg)
+            }
+    }
+    catch {
+        Log-Warning "Could not read the event log: $_"
+    }
+
+    $ServiceLog = Join-Path $InstallDir "kmr-service.log"
+    if (Test-Path $ServiceLog) {
+        Log-Info "--- kmr-service.log (tail) ---"
+        Get-Content $ServiceLog -Tail 20 | ForEach-Object { Log-Info ([string]$_) }
+    }
+
+    Log-Info "Hints: verify -e/-t, run Unblock-File $SmExe, or check Event Viewer > Windows Logs > System."
+}
+
 # Register and start service
 $argString = $KomariArgs -join ' '
 if ($UseSc) {
@@ -650,8 +710,11 @@ if ($UseSc) {
     New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName "Komari Agent Service" -StartupType Automatic | Out-Null
     # Exit code 42 (self-update restart) is treated as a failure, so restart it.
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 2>&1 | Out-Null
-    Start-Service -Name $ServiceName
-    Log-Success "Service $ServiceName installed and started using sc.exe."
+    if (-not (Start-AgentService)) {
+        Show-ServiceDiagnostics
+        exit 1
+    }
+    Log-Success "Service $ServiceName installed using sc.exe."
 }
 else {
 Log-Step "Configuring Windows service with nssm..."
@@ -664,9 +727,13 @@ Log-Step "Configuring Windows service with nssm..."
 & $SmExe set $ServiceName Start SERVICE_AUTO_START
 & $SmExe set $ServiceName AppExit Default Restart
 & $SmExe set $ServiceName AppRestartDelay 5000
-# Start the service using nssm
+# Start and verify the service
 & $SmExe start $ServiceName
-Log-Success "Service $ServiceName installed and started using nssm."
+if (-not (Start-AgentService)) {
+    Show-ServiceDiagnostics
+    exit 1
+}
+Log-Success "Service $ServiceName installed using nssm."
 }
 
 # Hide the install directory (system + hidden) unless disabled.

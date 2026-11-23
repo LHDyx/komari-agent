@@ -253,6 +253,14 @@ WantedBy=multi-user.target
 - 命令执行依赖 PowerShell；Web SSH 依赖 ConPTY（Windows 10 1809+）
 - 自更新替换正在运行的服务二进制由 `go-update` 处理，重启由 nssm 负责
 
+### 安装后校验
+
+服务启动后安装器会**等待并确认服务进入运行状态**（最长约 20 秒）：
+
+- Linux：按 init 系统检查 `systemctl is-active` / `rc-service status` / `upstart` / `launchd`
+- Windows：轮询 `Get-Service`，成功后打印进程 PID
+- 失败时输出诊断（服务状态、近期系统事件、`kmr-service.log`、排查提示）并以非零码退出
+
 ### 安装顺序保证
 
 版本解析、下载与 sha256 校验都在**停止旧服务之前**完成；只有校验通过才会停旧服务并替换二进制。
