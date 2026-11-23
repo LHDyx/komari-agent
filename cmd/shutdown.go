@@ -5,6 +5,28 @@ import (
 	"sync"
 )
 
+var (
+	externalStopMu sync.Mutex
+	externalStop   func()
+)
+
+// RequestShutdown asks the running agent to shut down gracefully. It is used by
+// the Windows service handler, where no signal is delivered.
+func RequestShutdown() {
+	externalStopMu.Lock()
+	stop := externalStop
+	externalStopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+func setExternalStop(stop func()) {
+	externalStopMu.Lock()
+	externalStop = stop
+	externalStopMu.Unlock()
+}
+
 type shutdownCoordinator struct {
 	mu            sync.Mutex
 	once          sync.Once
