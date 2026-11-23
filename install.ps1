@@ -707,7 +707,7 @@ if ($UseSc) {
     Log-Step "Configuring Windows service with sc.exe..."
     $binPath = '"' + $AgentPath + '"'
     if ($argString) { $binPath = $binPath + ' ' + $argString }
-    New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName "Komari Agent Service" -StartupType Automatic | Out-Null
+    New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName $ServiceName -StartupType Automatic | Out-Null
     # Exit code 42 (self-update restart) is treated as a failure, so restart it.
     & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 2>&1 | Out-Null
     if (-not (Start-AgentService)) {
@@ -723,7 +723,7 @@ Log-Step "Configuring Windows service with nssm..."
 # embedded quotes made nssm store a broken Application path (komari-agent#118).
 & $SmExe install $ServiceName $AgentPath $argString
 # Set display name and startup type using nssm
-& $SmExe set $ServiceName DisplayName "Komari Agent Service"
+& $SmExe set $ServiceName DisplayName $ServiceName
 & $SmExe set $ServiceName Start SERVICE_AUTO_START
 & $SmExe set $ServiceName AppExit Default Restart
 & $SmExe set $ServiceName AppRestartDelay 5000
